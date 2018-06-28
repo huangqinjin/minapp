@@ -1,0 +1,1 @@
+## minapp: TCP micro framework based on Boost.Asio inspired by Apache.MINA
