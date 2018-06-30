@@ -7,7 +7,7 @@ namespace minapp
 {
     class connector : public service
     {
-        context::work work_;
+        boost::asio::executor_work_guard<context::executor_type> guard_;
         endpoint remote_;
 
         connector(const endpoint& remote, handler_ptr handler, context_ptr context);

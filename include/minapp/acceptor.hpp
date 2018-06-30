@@ -8,8 +8,7 @@ namespace minapp
     class acceptor : public service
     {
         boost::asio::ip::tcp::acceptor acceptor_;
-        socket socket_;
-        context::work work_;
+        boost::asio::executor_work_guard<context::executor_type> guard_;
 
         acceptor(handler_ptr handler, context_ptr context);
         ~acceptor() override;

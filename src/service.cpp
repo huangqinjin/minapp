@@ -67,7 +67,7 @@ std::future<session_ptr> service::connect(
 }
 
 connector::connector(const endpoint& remote, handler_ptr handler, context_ptr context)
-    : work_(context ? *context : *(context = std::make_shared<minapp::context>()))
+    : guard_(boost::asio::make_work_guard(context ? *context : *(context = std::make_shared<minapp::context>())))
 {
     remote_ = remote;
     context_ = std::move(context);
@@ -120,7 +120,7 @@ std::future<session_ptr> connector::connect(std::function<void(session*, const e
 
 acceptor::acceptor(handler_ptr handler, context_ptr context)
     : acceptor_(context ? *context : *(context = std::make_shared<minapp::context>())),
-      socket_(*context), work_(*context)
+      guard_(boost::asio::make_work_guard(*context))
 {
     context_ = std::move(context);
     handler_ = noexcept_handler::wrap(std::move(handler));
@@ -160,8 +160,8 @@ void acceptor::unbind()
 
 void acceptor::accept()
 {
-    acceptor_.async_accept(socket_, [self = shared_from_this()]
-    (const boost::system::error_code& ec)
+    acceptor_.async_accept([self = shared_from_this()]
+    (const boost::system::error_code& ec, socket socket)
     {
         if (ec)
         {
@@ -169,7 +169,6 @@ void acceptor::accept()
         }
         else
         {
-            auto socket = std::move(self->socket_);
             self->accept();
             auto session = self->manager_->create(self);
             session->socket_ = std::move(socket);

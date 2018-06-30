@@ -33,8 +33,9 @@ class ServerHandler : public minapp::noexcept_handler_impl
 
     void read_impl(session* session, boost::asio::streambuf& buffer) override
     {
-        unsigned size = buffer.size();
-        const void* p = boost::asio::buffer_cast<const void*>(buffer.data());
+        auto buf = buffer.data();
+        unsigned size = buf.size();
+        const void* p = buf.data();
         streambuf_memory_printer<>{LOG(server READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
 
         auto msg = minapp::persist(std::vector<char>((const char*)p, ((const char*)p) + size));
@@ -46,7 +47,7 @@ class ServerHandler : public minapp::noexcept_handler_impl
         for(auto& buffer : list)
         {
             unsigned size = buffer.size();
-            const void* p = boost::asio::buffer_cast<const void*>(buffer);
+            const void* p = buffer.data();
             streambuf_memory_printer<>{(LOG(server WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
         }
     }
@@ -78,8 +79,9 @@ class ClientHandler : public minapp::noexcept_handler_impl
 
     void read_impl(session* session, boost::asio::streambuf& buffer) override
     {
-        unsigned size = buffer.size();
-        const char* p = boost::asio::buffer_cast<const char*>(buffer.data());
+        auto buf = buffer.data();
+        unsigned size = buf.size();
+        const void* p = buf.data();
         streambuf_memory_printer<>{LOG(client READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
     }
 
@@ -88,7 +90,7 @@ class ClientHandler : public minapp::noexcept_handler_impl
         for(auto& buffer : list)
         {
             unsigned size = buffer.size();
-            const void* p = boost::asio::buffer_cast<const void*>(buffer);
+            const void* p = buffer.data();
             streambuf_memory_printer<>{(LOG(client WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
         }
     }
@@ -118,7 +120,7 @@ int main()
     server->bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 2333));
 
     std::thread([client] {
-        auto future = client->connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string("127.0.0.1"), 2333));
+        auto future = client->connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 2333));
         auto session = future.get();
         for(int i = 0; i < 10; ++i)
         {

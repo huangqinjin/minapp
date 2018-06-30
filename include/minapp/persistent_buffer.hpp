@@ -9,14 +9,14 @@ namespace minapp
 {
     class persistent_buffer :
         public boost::intrusive::slist_base_hook<>,
-        public boost::asio::const_buffers_1
+        public boost::asio::const_buffer
     {
 
     public:
         typedef boost::any underlying_type;
         underlying_type underlying_;
 
-        typedef boost::asio::const_buffers_1 base_type;
+        typedef boost::asio::const_buffer base_type;
 
         base_type& base()
         {
@@ -62,14 +62,14 @@ namespace minapp
             return *this;
         }
 
-        boost::asio::const_buffers_1 reader() const
+        boost::asio::const_buffer reader() const
         {
             return base();
         }
 
-        boost::asio::mutable_buffers_1 writer()
+        boost::asio::mutable_buffer writer()
         {
-            return { const_cast<void*>(boost::asio::buffer_cast<const void*>(base())), boost::asio::buffer_size(base()) };
+            return { const_cast<void*>(data()), size() };
         }
 
         bool has_underlying() const
