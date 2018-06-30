@@ -7,13 +7,13 @@ if (NOT CMAKE_BUILD_TYPE)
             FORCE)
 endif()
 
-find_package(Boost REQUIRED COMPONENTS system)
+find_package(Boost 1.66 REQUIRED COMPONENTS system)
 
 file(GLOB SOURCE_FILES "src/*.cpp")
 add_library(${PROJECT_NAME} ${SOURCE_FILES})
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 14 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 
 # https://stackoverflow.com/questions/225432/export-all-symbols-when-creating-a-dll
 set_property(TARGET ${PROJECT_NAME} PROPERTY WINDOWS_EXPORT_ALL_SYMBOLS ON)

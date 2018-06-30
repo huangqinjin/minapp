@@ -160,9 +160,8 @@ void acceptor::unbind()
 
 void acceptor::accept()
 {
-    auto self = shared_from_this();
-    acceptor_.async_accept(socket_, [self]
-    (const boost::system::error_code& ec) mutable
+    acceptor_.async_accept(socket_, [self = shared_from_this()]
+    (const boost::system::error_code& ec)
     {
         if (ec)
         {

@@ -141,32 +141,11 @@ bool session::check(const boost::system::error_code& ec)
 
 std::future<session_ptr> session::connect(const endpoint& endpoint)
 {
-    //C++14 but an asio handler must meet the requirements of CopyConstructible types.
-    /*std::promise<session::ptr> promise;
-    std::future<session::ptr> future = promise.get_future();
-    auto self = shared_from_this();
+    std::promise<session_ptr> promise;
+    std::future<session_ptr> future = promise.get_future();
     socket_.async_connect(endpoint,
-    [self, promise = std::move(promise)](const boost::system::error_code& ec) mutable
-    {
-    if (ec)
-    {
-    self->handler()->error(self, ec);
-    boost::system::error_code ignored;
-    self->socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
-    self->socket_.close(ignored);
-    promise.set_exception(std::make_exception_ptr(boost::system::system_error(ec)));
-    }
-    else
-    {
-    self->connect(self);
-    promise.set_value(std::move(self));
-    }
-    });*/
-    auto self = shared_from_this();
-    auto p = std::make_shared<std::promise<session_ptr>>();
-    auto future = p->get_future();
-    socket_.async_connect(endpoint,
-        [self, p](const boost::system::error_code& ec)
+    [self = shared_from_this(), promise = std::move(promise)]
+    (const boost::system::error_code& ec) mutable
     {
         if (ec)
         {
@@ -174,13 +153,12 @@ std::future<session_ptr> session::connect(const endpoint& endpoint)
             boost::system::error_code ignored;
             self->socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
             self->socket_.close(ignored);
-            self->status_ = status::closed;
-            p->set_exception(std::make_exception_ptr(boost::system::system_error(ec)));
+            promise.set_exception(std::make_exception_ptr(boost::system::system_error(ec)));
         }
         else
         {
             self->connect();
-            p->set_value(std::move(self));
+            promise.set_value(std::move(self));
         }
     });
 
@@ -200,9 +178,8 @@ void session::write()
     auto marker = write_queue_.mark();
     if (marker <= 0) return;
 
-    auto self = shared_from_this();
     boost::asio::async_write(socket_, boost::make_iterator_range(write_queue_.marked()),
-        [self, marker](const boost::system::error_code& ec,
+        [self = shared_from_this(), marker](const boost::system::error_code& ec,
             std::size_t bytes_transferred)
     {
         if (self->check(ec))
@@ -275,9 +252,8 @@ void session::read()
 
 void session::read_some(std::size_t bufsize)
 {
-    auto self = shared_from_this();
     socket_.async_read_some(streambuf_.prepare(bufsize),
-        [self](const boost::system::error_code& ec,
+        [self = shared_from_this()](const boost::system::error_code& ec,
             std::size_t bytes_transferred)
     {
         if (self->check(ec))
@@ -301,7 +277,7 @@ void session::read_fixed(std::size_t bufsize)
     }
     else if (streambuf_.size() > bufsize)
     {
-        int n = static_cast<int>(streambuf_.size() - bufsize);
+        auto n = static_cast<int>(streambuf_.size() - bufsize);
         streambuf_.pbump(-n);
         streambuf_.setg(streambuf_.eback(), streambuf_.gptr(), streambuf_.pptr());
         handler()->read(this, streambuf_);
@@ -311,10 +287,9 @@ void session::read_fixed(std::size_t bufsize)
     }
     else
     {
-        auto self = shared_from_this();
         boost::asio::async_read(socket_,
             streambuf_.prepare(bufsize - streambuf_.size()),
-            [self, consume](const boost::system::error_code& ec,
+            [self = shared_from_this(), consume](const boost::system::error_code& ec,
                 std::size_t bytes_transferred)
         {
             if (self->check(ec))
@@ -330,57 +305,18 @@ void session::read_fixed(std::size_t bufsize)
 
 void session::read_delim(char delim)
 {
-    auto self = shared_from_this();
-    boost::asio::async_read_until(socket_,
-        static_cast<boost::asio::streambuf&>(streambuf_), delim,
-        [self](const boost::system::error_code& ec,
-            std::size_t bytes_transferred)
-    {
-        if (self->check(ec))
-        {
-            const bool ignore = has_options(self->protocol_options_, protocol_options::ignore_protocol_bytes);
-            if (self->streambuf_.size() == bytes_transferred)
-            {
-                if (ignore)
-                {
-                    int n = 1;
-                    self->streambuf_.pbump(-n);
-                    self->streambuf_.setg(self->streambuf_.eback(), self->streambuf_.gptr(), self->streambuf_.pptr());
-                }
-
-                self->handler()->read(self.get(), self->streambuf_);
-                self->streambuf_.consume(self->streambuf_.size());
-            }
-            else
-            {
-                int n = static_cast<int>(self->streambuf_.size() - bytes_transferred);
-                if (ignore) n += 1;
-                self->streambuf_.pbump(-n);
-                self->streambuf_.setg(self->streambuf_.eback(), self->streambuf_.gptr(), self->streambuf_.pptr());
-                self->handler()->read(self.get(), self->streambuf_);
-
-                char* p = self->streambuf_.pptr();
-                if (ignore) p += 1;
-                self->streambuf_.pbump(n);
-                self->streambuf_.setg(self->streambuf_.eback(), p, self->streambuf_.pptr());
-            }
-
-            self->read();
-        }
-    });
+    std::string s;
+    s.push_back(delim);
+    read_delim(s);
 }
 
 void session::read_delim(const std::string& delim)
 {
     std::size_t delim_length = delim.size();
     if (delim_length == 0) return read_some((std::min<std::size_t>)(read_buffer_size_, 65536));
-    if (delim_length == 1) return read_delim(delim[0]);
 
-    auto self = shared_from_this();
-    boost::asio::async_read_until(socket_,
-        static_cast<boost::asio::streambuf&>(streambuf_), delim,
-        [self, delim_length](const boost::system::error_code& ec,
-            std::size_t bytes_transferred)
+    auto callback = [self = shared_from_this(), delim_length]
+            (const boost::system::error_code& ec, std::size_t bytes_transferred)
     {
         if (self->check(ec))
         {
@@ -389,7 +325,7 @@ void session::read_delim(const std::string& delim)
             {
                 if (ignore)
                 {
-                    int n = static_cast<int>(delim_length);
+                    auto n = static_cast<int>(delim_length);
                     self->streambuf_.pbump(-n);
                     self->streambuf_.setg(self->streambuf_.eback(), self->streambuf_.gptr(), self->streambuf_.pptr());
                 }
@@ -399,7 +335,7 @@ void session::read_delim(const std::string& delim)
             }
             else
             {
-                int n = static_cast<int>(self->streambuf_.size() - bytes_transferred);
+                auto n = static_cast<int>(self->streambuf_.size() - bytes_transferred);
                 if (ignore) n += static_cast<int>(delim_length);
                 self->streambuf_.pbump(-n);
                 self->streambuf_.setg(self->streambuf_.eback(), self->streambuf_.gptr(), self->streambuf_.pptr());
@@ -413,17 +349,29 @@ void session::read_delim(const std::string& delim)
 
             self->read();
         }
-    });
+    };
+
+    if (delim_length == 1)
+    {
+        boost::asio::async_read_until(socket_,
+           static_cast<boost::asio::streambuf&>(streambuf_),
+           delim[0], std::move(callback));
+    }
+    else
+    {
+        boost::asio::async_read_until(socket_,
+           static_cast<boost::asio::streambuf&>(streambuf_),
+           delim, std::move(callback));
+    }
 }
 
 void session::read_prefix(std::size_t len)
 {
     if (streambuf_.size() < len)
     {
-        auto self = shared_from_this();
         boost::asio::async_read(socket_,
             streambuf_.prepare(len - streambuf_.size()),
-            [self, len](const boost::system::error_code& ec,
+            [self = shared_from_this(), len](const boost::system::error_code& ec,
                 std::size_t bytes_transferred)
         {
             if (self->check(ec))
@@ -487,10 +435,9 @@ void session::read_prefix(std::size_t len)
         }
         else
         {
-            auto self = shared_from_this();
             boost::asio::async_read(socket_,
                 streambuf_.prepare(len + data_len - streambuf_.size()),
-                [self, len, ignore](const boost::system::error_code& ec,
+                [self = shared_from_this(), len, ignore](const boost::system::error_code& ec,
                     std::size_t bytes_transferred)
             {
                 if (self->check(ec))
