@@ -23,6 +23,7 @@ namespace minapp
     {
         do_not_consume_buffer = 1,                              // only supports protocol::fixed
         ignore_protocol_bytes = do_not_consume_buffer << 1,     // supports protocol::prefix_*
+        use_little_endian = ignore_protocol_bytes << 1,         // supports protocol::prefix_*
     };
 
     inline unsigned to_integer(protocol_options o) { return static_cast<unsigned>(o); }

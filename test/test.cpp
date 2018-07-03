@@ -28,7 +28,7 @@ class ServerHandler : public minapp::noexcept_handler_impl
     {
         LOG(server CONN) << "session[" << session->id() << "] connect from " << endpoint;
 
-        session->protocol(protocol::prefix_8);
+        session->protocol(protocol::prefix_32, protocol_options::use_little_endian);
     }
 
     void read_impl(session* session, boost::asio::streambuf& buffer) override
@@ -74,7 +74,7 @@ class ClientHandler : public minapp::noexcept_handler_impl
     {
         LOG(client CONN) << "session[" << session->id() << "] connect to " << endpoint;
 
-        session->protocol(protocol::prefix_8);
+        session->protocol(protocol::prefix_32, protocol_options::use_little_endian);
     }
 
     void read_impl(session* session, boost::asio::streambuf& buffer) override
@@ -124,8 +124,9 @@ int main()
         auto session = future.get();
         for(int i = 0; i < 10; ++i)
         {
-            std::string buf = " sent " + std::to_string(i);
-            buf[0] = (char)(buf.size() - 1);
+            std::string buf = "    sent " + std::to_string(i);
+            uint32_t size = buf.size() - 4;
+            std::memcpy(&buf[0], &size, 4);
             auto msg = minapp::persist(buf);
             session->write(msg);
 
