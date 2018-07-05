@@ -7,6 +7,7 @@
 #include "attribute_set.hpp"
 
 #include <future>
+#include <atomic>
 
 #include <boost/asio/coroutine.hpp>
 
@@ -16,7 +17,6 @@ namespace minapp
     {
         connecting,
         connected,
-        writing,
         reading,
         closing,
         closed,
@@ -40,7 +40,7 @@ namespace minapp
         basic_streambuf<> streambuf_;
         enum protocol protocol_;
         enum protocol_options protocol_options_;
-        enum status status_;
+        std::atomic<enum status> status_;
         std::size_t read_buffer_size_;
         std::string delimiter_;
 

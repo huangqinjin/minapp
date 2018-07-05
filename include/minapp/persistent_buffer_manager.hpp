@@ -71,12 +71,12 @@ namespace minapp
             return manage(list);
         }
 
-        std::int64_t marker()
+        long marker()
         {
             return marker_;
         }
 
-        std::int64_t mark()
+        long mark()
         {
             if (managed_buffers_list_2.empty())
             {

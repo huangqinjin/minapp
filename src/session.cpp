@@ -1,11 +1,11 @@
 #include <minapp/handler.hpp>
 #include <minapp/session.hpp>
 #include <minapp/service.hpp>
+
 #include <boost/range/iterator_range_core.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/write.hpp>
-#include <atomic>
 
 using namespace minapp;
 
@@ -27,7 +27,7 @@ session::session(service_ptr service)
 
 session::~session()
 {
-
+    close();
 }
 
 unsigned long session::id() const
