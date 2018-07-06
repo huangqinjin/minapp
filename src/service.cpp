@@ -43,12 +43,12 @@ std::future<session_ptr> service::connect(const endpoint& endpoint, handler_ptr 
 }
 
 std::future<session_ptr> service::connect(
-        const endpoint & endpoint,
-        std::function<void(session*, const minapp::endpoint&)> callback)
+        const endpoint& endpoint,
+        std::function<void(session*, boost::system::error_code)> callback)
 {
     class connect_handler : public noexcept_handler_impl
     {
-        using connector = std::function<void(session* session, const minapp::endpoint&)>;
+        using connector = std::function<void(session* session, boost::system::error_code)>;
         connector conn;
 
     public:
@@ -58,8 +58,15 @@ std::future<session_ptr> service::connect(
         void connect_impl(session* session, const minapp::endpoint& endpoint) override
         {
             session->handler({});
-            if(connector conn = std::move(this->conn)) conn(session, endpoint);
+            if(connector conn = std::move(this->conn)) conn(session, {});
             else session->handler()->connect(session, endpoint);
+        }
+
+        void error_impl(session* session, boost::system::error_code ec) override
+        {
+            session->handler({});
+            if(connector conn = std::move(this->conn)) conn(session, std::move(ec));
+            else session->handler()->error(session, std::move(ec));
         }
     };
 
@@ -112,7 +119,7 @@ std::future<session_ptr> connector::connect(handler_ptr handler)
     return service::connect(remote_, std::move(handler));
 }
 
-std::future<session_ptr> connector::connect(std::function<void(session*, const endpoint&)> callback)
+std::future<session_ptr> connector::connect(std::function<void(session*, boost::system::error_code)> callback)
 {
     return service::connect(remote_, std::move(callback));
 }

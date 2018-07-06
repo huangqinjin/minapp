@@ -25,7 +25,7 @@ namespace minapp
         const context_ptr& context();
         std::future<session_ptr> connect(const endpoint& endpoint, attribute_set attrs = {});
         std::future<session_ptr> connect(const endpoint& endpoint, handler_ptr handler, attribute_set attrs = {});
-        std::future<session_ptr> connect(const endpoint& endpoint, std::function<void(session*, const minapp::endpoint&)> callback);
+        std::future<session_ptr> connect(const endpoint& endpoint, std::function<void(session*, boost::system::error_code)> callback);
     };
 }
 #endif

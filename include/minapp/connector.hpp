@@ -22,7 +22,7 @@ namespace minapp
         using service::connect;
         std::future<session_ptr> connect();
         std::future<session_ptr> connect(handler_ptr handler);
-        std::future<session_ptr> connect(std::function<void(session*, const endpoint&)> callback);
+        std::future<session_ptr> connect(std::function<void(session*, boost::system::error_code)> callback);
     };
 }
 #endif
