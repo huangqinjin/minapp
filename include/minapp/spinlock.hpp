@@ -12,6 +12,7 @@ namespace minapp
     public:
         spinlock() = default;
         spinlock(const spinlock&) {}
+        spinlock& operator=(const spinlock&) { return *this; }
         bool try_lock() { return !guard_.test_and_set(std::memory_order_acquire); }
         void lock() { while(!try_lock()) continue; }
         void unlock() { guard_.clear(std::memory_order_release); }
