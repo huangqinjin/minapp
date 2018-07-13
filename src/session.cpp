@@ -400,14 +400,14 @@ void session::read_prefix(std::size_t len)
                 data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 48;
                 data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 40;
                 data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 32;
-                [[fallthrough]];
+            //    [[fallthrough]];
             case 4:
                 data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 24;
                 data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 16;
-                [[fallthrough]];
+            //    [[fallthrough]];
             case 2:
                 data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 8;
-                [[fallthrough]];
+            //    [[fallthrough]];
             case 1:
                 data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p));
                 break;
