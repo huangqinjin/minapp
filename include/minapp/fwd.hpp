@@ -10,13 +10,6 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
 
-#ifdef _MSC_VER
-// may be a bug for msvc
-#define MINAPP_ELABORATED_ENUM_CLASS class
-#else
-#define MINAPP_ELABORATED_ENUM_CLASS
-#endif
-
 /**
  * reference type:
  *     - s  shared ptr

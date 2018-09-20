@@ -41,7 +41,7 @@ namespace minapp
         basic_streambuf<> streambuf_;
         enum protocol protocol_;
         enum protocol_options protocol_options_;
-        std::atomic<enum MINAPP_ELABORATED_ENUM_CLASS status> status_;
+        std::atomic<enum status> status_;
         std::size_t read_buffer_size_;
         std::string delimiter_;
 
