@@ -378,37 +378,19 @@ void session::read_prefix(std::size_t len)
     }
     else
     {
-        const char* p = buf_.gptr();
+        auto p = (const unsigned char*)buf_.gptr();
         std::uintmax_t data_len = 0;
 
         if(has_options(protocol_options_, protocol_options::use_little_endian))
         {
-            for(int i = 0; i < len; ++i)
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << (8 * i);
+            for(unsigned i = 0; i < len; ++i)
+                data_len |= static_cast<std::uintmax_t>(*p++) << (8 * i);
         }
         else
         {
-            switch (len)
-            {
-            case 8:
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 56;
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 48;
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 40;
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 32;
-            //    [[fallthrough]];
-            case 4:
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 24;
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 16;
-            //    [[fallthrough]];
-            case 2:
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p++)) << 8;
-            //    [[fallthrough]];
-            case 1:
-                data_len |= static_cast<std::uintmax_t>(static_cast<unsigned char>(*p));
-                break;
-            default:
-                std::terminate();
-            }
+            p += len;
+            for(unsigned i = 0; i < len; ++i)
+                data_len |= static_cast<std::uintmax_t>(*--p) << (8 * i);
         }
 
         const bool ignore = has_options(protocol_options_, protocol_options::ignore_protocol_bytes);
