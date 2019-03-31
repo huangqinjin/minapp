@@ -36,7 +36,7 @@ class ServerHandler : public noexcept_handler_impl
         auto d = buf.data();
         unsigned size = d.size();
         const void* p = d.data();
-        streambuf_memory_printer<>{LOG(server READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
+        streambuf_memory_printer{LOG(server READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
 
         auto msg = minapp::persist(std::vector<char>((const char*)p, ((const char*)p) + size));
         session->write(msg);
@@ -48,7 +48,7 @@ class ServerHandler : public noexcept_handler_impl
         {
             unsigned size = buf.size();
             const void* p = buf.data();
-            streambuf_memory_printer<>{(LOG(server WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
+            streambuf_memory_printer{(LOG(server WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
         }
     }
 
@@ -82,7 +82,7 @@ class ClientHandler : public minapp::noexcept_handler_impl
         auto d = buf.data();
         unsigned size = d.size();
         const void* p = d.data();
-        streambuf_memory_printer<>{LOG(client READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
+        streambuf_memory_printer{LOG(client READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
     }
 
     void write_impl(session* session, persistent_buffer_list& list) override
@@ -91,7 +91,7 @@ class ClientHandler : public minapp::noexcept_handler_impl
         {
             unsigned size = buf.size();
             const void* p = buf.data();
-            streambuf_memory_printer<>{(LOG(client WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
+            streambuf_memory_printer{(LOG(client WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
         }
     }
 
