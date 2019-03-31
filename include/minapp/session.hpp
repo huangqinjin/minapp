@@ -38,7 +38,7 @@ namespace minapp
         minapp::socket socket_;
         handler_ptr handler_;
         persistent_buffer_manager write_queue_;
-        basic_streambuf<> streambuf_;
+        basic_streambuf<> buf_;
         enum protocol protocol_;
         enum protocol_options protocol_options_;
         std::atomic<enum status> status_;
@@ -52,7 +52,6 @@ namespace minapp
         ~session();
 
         unsigned long id() const;
-        boost::asio::streambuf& streambuf();
         std::size_t read_buffer_size() const;
         void read_buffer_size(std::size_t sz);
         const std::string& delimiter() const;
@@ -97,7 +96,7 @@ namespace minapp
 
     private:
         bool check(const boost::system::error_code& ec);
-        std::future<session_ptr> connect(const endpoint& endpoint);
+        std::future<session_ptr> connect(const endpoint& ep);
         void connect();
         void write();
         void read();

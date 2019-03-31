@@ -49,22 +49,22 @@ namespace
 }
 
 
-std::shared_ptr<handler> handler::dummy()
+handler_ptr handler::dummy()
 {
     static auto dummy_handler = std::make_shared<noexcept_handler>();
     return dummy_handler;
 }
 
-std::shared_ptr<handler> noexcept_handler::wrapped() noexcept
+handler_ptr noexcept_handler::wrapped() noexcept
 {
     return {};
 }
 
-void noexcept_handler_impl::connect(session* session, const endpoint& endpoint) noexcept
+void noexcept_handler_impl::connect(session* session, const endpoint& ep) noexcept
 {
     try
     {
-        connect_impl(session, endpoint);
+        connect_impl(session, ep);
     }
     catch (std::exception& e)
     {
@@ -76,11 +76,11 @@ void noexcept_handler_impl::connect(session* session, const endpoint& endpoint) 
     }
 }
 
-void noexcept_handler_impl::read(session* session, boost::asio::streambuf& buffer) noexcept
+void noexcept_handler_impl::read(session* session, buffer& buf) noexcept
 {
     try
     {
-        read_impl(session, buffer);
+        read_impl(session, buf);
     }
     catch (std::exception& e)
     {
@@ -169,14 +169,14 @@ std::shared_ptr<noexcept_handler> noexcept_handler::wrap(handler_ptr handler)
                 explicit noexcept_handler_wrapper(handler_ptr handler) : handler_(std::move(handler)) {}
 
             private:
-                void connect_impl(session* session, const endpoint& endpoint) override
+                void connect_impl(session* session, const endpoint& ep) override
                 {
-                    handler_->connect(session, endpoint);
+                    handler_->connect(session, ep);
                 }
 
-                void read_impl(session* session, boost::asio::streambuf& buffer) override
+                void read_impl(session* session, buffer& buf) override
                 {
-                    handler_->read(session, buffer);
+                    handler_->read(session, buf);
                 }
 
                 void write_impl(session* session, persistent_buffer_list& list) override

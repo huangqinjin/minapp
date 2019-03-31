@@ -22,20 +22,20 @@ struct ostream_guard
 
 using namespace minapp;
 
-class ServerHandler : public minapp::noexcept_handler_impl
+class ServerHandler : public noexcept_handler_impl
 {
-    void connect_impl(session* session, const endpoint& endpoint) override
+    void connect_impl(session* session, const endpoint& ep) override
     {
-        LOG(server CONN) << "session[" << session->id() << "] connect from " << endpoint;
+        LOG(server CONN) << "session[" << session->id() << "] connect from " << ep;
 
         session->protocol(protocol::prefix_32, protocol_options::use_little_endian);
     }
 
-    void read_impl(session* session, boost::asio::streambuf& buffer) override
+    void read_impl(session* session, buffer& buf) override
     {
-        auto buf = buffer.data();
-        unsigned size = buf.size();
-        const void* p = buf.data();
+        auto d = buf.data();
+        unsigned size = d.size();
+        const void* p = d.data();
         streambuf_memory_printer<>{LOG(server READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
 
         auto msg = minapp::persist(std::vector<char>((const char*)p, ((const char*)p) + size));
@@ -44,10 +44,10 @@ class ServerHandler : public minapp::noexcept_handler_impl
 
     void write_impl(session* session, persistent_buffer_list& list) override
     {
-        for(auto& buffer : list)
+        for(auto& buf : list)
         {
-            unsigned size = buffer.size();
-            const void* p = buffer.data();
+            unsigned size = buf.size();
+            const void* p = buf.data();
             streambuf_memory_printer<>{(LOG(server WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
         }
     }
@@ -70,27 +70,27 @@ class ServerHandler : public minapp::noexcept_handler_impl
 
 class ClientHandler : public minapp::noexcept_handler_impl
 {
-    void connect_impl(session* session, const endpoint& endpoint) override
+    void connect_impl(session* session, const endpoint& ep) override
     {
-        LOG(client CONN) << "session[" << session->id() << "] connect to " << endpoint;
+        LOG(client CONN) << "session[" << session->id() << "] connect to " << ep;
 
         session->protocol(protocol::prefix_32, protocol_options::use_little_endian);
     }
 
-    void read_impl(session* session, boost::asio::streambuf& buffer) override
+    void read_impl(session* session, buffer& buf) override
     {
-        auto buf = buffer.data();
-        unsigned size = buf.size();
-        const void* p = buf.data();
+        auto d = buf.data();
+        unsigned size = d.size();
+        const void* p = d.data();
         streambuf_memory_printer<>{LOG(client READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
     }
 
     void write_impl(session* session, persistent_buffer_list& list) override
     {
-        for(auto& buffer : list)
+        for(auto& buf : list)
         {
-            unsigned size = buffer.size();
-            const void* p = buffer.data();
+            unsigned size = buf.size();
+            const void* p = buf.data();
             streambuf_memory_printer<>{(LOG(client WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
         }
     }

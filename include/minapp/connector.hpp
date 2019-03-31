@@ -10,12 +10,12 @@ namespace minapp
         boost::asio::executor_work_guard<context::executor_type> guard_;
         endpoint remote_;
 
-        connector(const endpoint& remote, handler_ptr handler, context_ptr context);
+        connector(const endpoint& remote, handler_ptr handler, context_ptr ctx);
         ~connector() override;
 
     public:
-        static connector_ptr create(handler_ptr handler, context_ptr context = {});
-        static connector_ptr create(const endpoint& remote, handler_ptr handler, context_ptr context = {});
+        static connector_ptr create(handler_ptr handler, context_ptr ctx = {});
+        static connector_ptr create(const endpoint& remote, handler_ptr handler, context_ptr ctx = {});
         connector_ptr shared_from_this();
         const endpoint& remote() const;
 

@@ -5,17 +5,16 @@
 
 namespace minapp
 {
-    class handler :
-        public std::enable_shared_from_this<handler>
+    class handler : public std::enable_shared_from_this<handler>
     {
     public:
         static handler_ptr dummy();
 
-        virtual ~handler() {}
+        virtual ~handler() = default;
 
-        virtual void connect(session* session, const endpoint& endpoint) {}
+        virtual void connect(session* session, const endpoint& ep) {}
 
-        virtual void read(session* session, boost::asio::streambuf& buffer) {}
+        virtual void read(session* session, buffer& buf) {}
 
         virtual void write(session* session, persistent_buffer_list& list) {}
 
@@ -39,9 +38,9 @@ namespace minapp
 
         handler_ptr wrapped() noexcept override;
 
-        void connect(session* session, const endpoint& endpoint) noexcept override {}
+        void connect(session* session, const endpoint& ep) noexcept override {}
 
-        void read(session* session, boost::asio::streambuf& buffer) noexcept override {}
+        void read(session* session, buffer& buf) noexcept override {}
 
         void write(session* session, persistent_buffer_list& list) noexcept override {}
 
@@ -55,9 +54,9 @@ namespace minapp
     class noexcept_handler_impl : public noexcept_handler
     {
     public:
-        void connect(session* session, const boost::asio::ip::tcp::endpoint& endpoint) noexcept final;
+        void connect(session* session, const endpoint& ep) noexcept final;
 
-        void read(session* session, boost::asio::streambuf& buffer) noexcept final;
+        void read(session* session, buffer& buf) noexcept final;
 
         void write(session* session, persistent_buffer_list& list) noexcept final;
 
@@ -68,9 +67,9 @@ namespace minapp
         void close(session* session) noexcept final;
 
     protected:
-        virtual void connect_impl(session* session, const endpoint& endpoint) {}
+        virtual void connect_impl(session* session, const endpoint& ep) {}
 
-        virtual void read_impl(session* session, boost::asio::streambuf& buffer) {}
+        virtual void read_impl(session* session, buffer& buf) {}
 
         virtual void write_impl(session* session, persistent_buffer_list& list) {}
 

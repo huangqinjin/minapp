@@ -39,6 +39,7 @@ namespace minapp
     class acceptor;
     class attribute_set;
 
+    using buffer = boost::asio::streambuf;
     using endpoint = boost::asio::ip::tcp::endpoint;
     using socket = boost::asio::ip::tcp::socket;
     using context = boost::asio::io_context;
