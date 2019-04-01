@@ -3,7 +3,7 @@
 
 #include "fwd.hpp"
 #include "persistent_buffer_manager.hpp"
-#include "streambuf.hpp"
+#include "buffer.hpp"
 #include "protocol.hpp"
 #include "attribute_set.hpp"
 
@@ -38,7 +38,7 @@ namespace minapp
         minapp::socket socket_;
         handler_ptr handler_;
         persistent_buffer_manager write_queue_;
-        basic_streambuf<> buf_;
+        triple_buffer buf_;
         enum protocol protocol_;
         enum protocol_options protocol_options_;
         std::atomic<enum status> status_;

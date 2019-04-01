@@ -6,7 +6,6 @@
 #define MINAPP_FWD_HPP
 
 #include <memory>
-#include <boost/asio/streambuf.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
 
@@ -16,7 +15,7 @@
  *     - w  weak ptr
  *     - r  raw ptr
  *
- *     _____________________________________
+ *     ______________________________________
  *    |                 s                    |
  *    v                                      |
  * service --s--> session_manager ---r--> session --r--> socket
@@ -31,6 +30,7 @@ namespace minapp
     class persistent_buffer;
     class persistent_buffer_list;
     class persistent_buffer_manager;
+    class buffer;
     class session;
     class session_manager;
     class handler;
@@ -39,7 +39,6 @@ namespace minapp
     class acceptor;
     class attribute_set;
 
-    using buffer = boost::asio::streambuf;
     using endpoint = boost::asio::ip::tcp::endpoint;
     using socket = boost::asio::ip::tcp::socket;
     using context = boost::asio::io_context;

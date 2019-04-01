@@ -33,9 +33,8 @@ class ServerHandler : public noexcept_handler_impl
 
     void read_impl(session* session, buffer& buf) override
     {
-        auto d = buf.data();
-        unsigned size = d.size();
-        const void* p = d.data();
+        unsigned size = buf.size();
+        const void* p = buf.data();
         streambuf_memory_printer{LOG(server READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
 
         auto msg = minapp::persist(std::vector<char>((const char*)p, ((const char*)p) + size));
@@ -79,9 +78,8 @@ class ClientHandler : public minapp::noexcept_handler_impl
 
     void read_impl(session* session, buffer& buf) override
     {
-        auto d = buf.data();
-        unsigned size = d.size();
-        const void* p = d.data();
+        unsigned size = buf.size();
+        const void* p = buf.data();
         streambuf_memory_printer{LOG(client READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
     }
 

@@ -9,8 +9,36 @@
 
 using namespace minapp;
 
+#define CALLBACK(...) [self = shared_from_this(), __VA_ARGS__](const boost::system::error_code& ec, std::size_t bytes_transferred)
+
 namespace
 {
+    struct dynamic_buffer_adaptor
+    {
+        triple_buffer& impl;
+
+        using const_buffers_type = triple_buffer::const_buffers_type;
+        using mutable_buffers_type = triple_buffer::mutable_buffers_type;
+
+        dynamic_buffer_adaptor(const dynamic_buffer_adaptor&) = delete;
+        dynamic_buffer_adaptor(dynamic_buffer_adaptor&&) = default;
+
+        const_buffers_type data() const { return impl.internal_input_buffer(); }
+        std::size_t size() const { return impl.internal_input_buffer().size(); }
+        std::size_t max_size() const { return impl.max_size() - impl.external_input_buffer().size(); }
+        std::size_t capacity() const { return impl.capacity() - impl.external_input_buffer().size(); }
+        mutable_buffers_type prepare(std::size_t n) { return impl.prepare_output_buffer(n); }
+        void commit(std::size_t n) { impl.commit_to_internal_input(n); }
+        void consume(std::size_t n); // [async_]read_util() do not need consume, and it's requirement
+                                     // of DynamicBuffer is not compatible with triple_buffer.
+                                     // Declare it to meet the DynamicBuffer requirements and no define
+                                     // it to catch error if it is called anywhere.
+    };
+
+    static_assert(boost::asio::is_dynamic_buffer<dynamic_buffer_adaptor>::value,
+                  "dynamic_buffer_adaptor should model the boost::asio::DynamicBuffer concept");
+
+
     const std::string crlf = { '\r', '\n' };
 
     std::atomic_ulong id = ATOMIC_VAR_INIT(1);
@@ -247,53 +275,49 @@ void session::read()
 
 void session::read_some(std::size_t bufsize)
 {
-    socket_.async_read_some(buf_.prepare(bufsize),
-        [self = shared_from_this()](const boost::system::error_code& ec,
-            std::size_t bytes_transferred)
+    const bool consume = !has_options(protocol_options_, protocol_options::do_not_consume_buffer);
+    if(buf_.internal_input_buffer().size() > 0)
     {
-        if (self->check(ec))
+        buf_.commit_to_external_input(bufsize);
+        handler()->read(this, buf_);
+        if(consume) buf_.consume_whole_external_input();
+        read();
+    }
+    else
+    {
+        socket_.async_read_some(buf_.prepare_output_buffer(bufsize), CALLBACK(consume)
         {
-            self->buf_.commit(bytes_transferred);
+            if (!self->check(ec)) return;
+            self->buf_.commit_to_internal_input(bytes_transferred);
+            self->buf_.commit_whole_internal_input();
             self->handler()->read(self.get(), self->buf_);
-            self->buf_.consume(self->buf_.size());
+            if(consume) self->buf_.consume(self->buf_.size());
             self->read();
-        }
-    });
+        });
+    }
 }
 
 void session::read_fixed(std::size_t bufsize)
 {
     const bool consume = !has_options(protocol_options_, protocol_options::do_not_consume_buffer);
-    if (buf_.size() == bufsize)
+    const std::size_t remaining = buf_.internal_input_buffer().size();
+    if (remaining >= bufsize)
     {
+        buf_.commit_to_external_input(bufsize);
         handler()->read(this, buf_);
-        if (consume) buf_.consume(buf_.size());
-        read();
-    }
-    else if (buf_.size() > bufsize)
-    {
-        auto n = static_cast<int>(buf_.size() - bufsize);
-        buf_.pbump(-n);
-        buf_.setg(buf_.eback(), buf_.gptr(), buf_.pptr());
-        handler()->read(this, buf_);
-        buf_.pbump(n);
-        if (consume) buf_.setg(buf_.eback(), buf_.gptr(), buf_.pptr());
+        if(consume) buf_.consume_whole_external_input();
         read();
     }
     else
     {
-        boost::asio::async_read(socket_,
-            buf_.prepare(bufsize - buf_.size()),
-            [self = shared_from_this(), consume](const boost::system::error_code& ec,
-                std::size_t bytes_transferred)
+        boost::asio::async_read(socket_, buf_.prepare_output_buffer(bufsize - remaining), CALLBACK(consume)
         {
-            if (self->check(ec))
-            {
-                self->buf_.commit(bytes_transferred);
-                self->handler()->read(self.get(), self->buf_);
-                if (consume) self->buf_.consume(self->buf_.size());
-                self->read();
-            }
+            if (!self->check(ec)) return;
+            self->buf_.commit_to_internal_input(bytes_transferred);
+            self->buf_.commit_whole_internal_input();
+            self->handler()->read(self.get(), self->buf_);
+            if (consume) self->buf_.consume_whole_external_input();
+            self->read();
         });
     }
 }
@@ -310,75 +334,46 @@ void session::read_delim(const std::string& delim)
     std::size_t delim_length = delim.size();
     if (delim_length == 0) return read_some((std::min<std::size_t>)(read_buffer_size_, 65536));
 
-    auto callback = [self = shared_from_this(), delim_length]
-            (const boost::system::error_code& ec, std::size_t bytes_transferred)
+    const bool consume = !has_options(protocol_options_, protocol_options::do_not_consume_buffer);
+    const bool ignore = has_options(protocol_options_, protocol_options::ignore_protocol_bytes);
+    auto callback = CALLBACK(delim_length, consume, ignore)
     {
-        if (self->check(ec))
-        {
-            const bool ignore = has_options(self->protocol_options_, protocol_options::ignore_protocol_bytes);
-            if (self->buf_.size() == bytes_transferred)
-            {
-                if (ignore)
-                {
-                    auto n = static_cast<int>(delim_length);
-                    self->buf_.pbump(-n);
-                    self->buf_.setg(self->buf_.eback(), self->buf_.gptr(), self->buf_.pptr());
-                }
+        if (!self->check(ec)) return;
 
-                self->handler()->read(self.get(), self->buf_);
-                self->buf_.consume(self->buf_.size());
-            }
-            else
-            {
-                auto n = static_cast<int>(self->buf_.size() - bytes_transferred);
-                if (ignore) n += static_cast<int>(delim_length);
-                self->buf_.pbump(-n);
-                self->buf_.setg(self->buf_.eback(), self->buf_.gptr(), self->buf_.pptr());
-                self->handler()->read(self.get(), self->buf_);
-
-                char* p = self->buf_.pptr();
-                if (ignore) p += delim_length;
-                self->buf_.pbump(n);
-                self->buf_.setg(self->buf_.eback(), p, self->buf_.pptr());
-            }
-
-            self->read();
-        }
+        // buf has already been committed and bytes_transferred is the length from the beginning of
+        // internal input to the delimiter (including), so it may be smaller than the size of internal input.
+        self->buf_.commit_to_external_input(bytes_transferred - delim_length * ignore);
+        self->handler()->read(self.get(), self->buf_);
+        self->buf_.commit_to_external_input(delim_length * ignore);
+        if(consume) self->buf_.consume_whole_external_input();
+        self->read();
     };
 
     if (delim_length == 1)
     {
-        boost::asio::async_read_until(socket_,
-           static_cast<boost::asio::streambuf&>(buf_),
-           delim[0], std::move(callback));
+        boost::asio::async_read_until(socket_, dynamic_buffer_adaptor{buf_}, delim[0], std::move(callback));
     }
     else
     {
-        boost::asio::async_read_until(socket_,
-           static_cast<boost::asio::streambuf&>(buf_),
-           delim, std::move(callback));
+        boost::asio::async_read_until(socket_, dynamic_buffer_adaptor{buf_}, delim, std::move(callback));
     }
 }
 
 void session::read_prefix(std::size_t len)
 {
-    if (buf_.size() < len)
+    const std::size_t remaining = buf_.internal_input_buffer().size();
+    if (remaining < len)
     {
-        boost::asio::async_read(socket_,
-            buf_.prepare(len - buf_.size()),
-            [self = shared_from_this(), len](const boost::system::error_code& ec,
-                std::size_t bytes_transferred)
+        boost::asio::async_read(socket_, buf_.prepare_output_buffer(len - remaining), CALLBACK(len)
         {
-            if (self->check(ec))
-            {
-                self->buf_.commit(bytes_transferred);
-                self->read_prefix(len);
-            }
+            if (!self->check(ec)) return;
+            self->buf_.commit_to_internal_input(bytes_transferred);
+            self->read_prefix(len);
         });
     }
     else
     {
-        auto p = (const unsigned char*)buf_.gptr();
+        auto p = (const unsigned char*)buf_.internal_input_buffer().data();
         std::uintmax_t data_len = 0;
 
         if(has_options(protocol_options_, protocol_options::use_little_endian))
@@ -397,43 +392,15 @@ void session::read_prefix(std::size_t len)
 
         if (data_len > read_buffer_size_)
         {
-            // \todo log something
+            /// \todo log something
             assert(0);
-        }
-        else if (buf_.size() == len + data_len)
-        {
-            if (ignore) buf_.consume(len);
-            handler()->read(this, buf_);
-            buf_.consume(buf_.size());
-            read();
-        }
-        else if (buf_.size() > len + data_len)
-        {
-            if (ignore) buf_.consume(len);
-            auto n = static_cast<int>(buf_.size() - data_len);
-            buf_.pbump(-n);
-            buf_.setg(buf_.eback(), buf_.gptr(), buf_.pptr());
-            handler()->read(this, buf_);
-            buf_.setg(buf_.eback(), buf_.pptr(), buf_.pptr());
-            buf_.pbump(n);
-            read();
         }
         else
         {
-            boost::asio::async_read(socket_,
-                buf_.prepare(len + data_len - buf_.size()),
-                [self = shared_from_this(), len, ignore](const boost::system::error_code& ec,
-                    std::size_t bytes_transferred)
-            {
-                if (self->check(ec))
-                {
-                    self->buf_.commit(bytes_transferred);
-                    if (ignore) self->buf_.consume(len);
-                    self->handler()->read(self.get(), self->buf_);
-                    self->buf_.consume(self->buf_.size());
-                    self->read();
-                }
-            });
+            buf_.commit_to_external_input(len);
+            /// \todo too dangerous to consume all, consider more
+            if (ignore) buf_.consume_whole_external_input();
+            read_fixed(data_len);
         }
     }
 }

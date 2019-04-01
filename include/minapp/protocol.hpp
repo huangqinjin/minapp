@@ -21,8 +21,8 @@ namespace minapp
 
     enum class protocol_options : unsigned
     {
-        do_not_consume_buffer = 1,                              // only supports protocol::fixed
-        ignore_protocol_bytes = do_not_consume_buffer << 1,     // supports protocol::prefix_*
+        do_not_consume_buffer = 1,
+        ignore_protocol_bytes = do_not_consume_buffer << 1,     // supports protocol::prefix_* and protocol::delim_*
         use_little_endian = ignore_protocol_bytes << 1,         // supports protocol::prefix_*
     };
 
