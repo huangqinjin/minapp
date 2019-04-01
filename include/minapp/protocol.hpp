@@ -17,6 +17,7 @@ namespace minapp
         prefix_16,
         prefix_32,
         prefix_64,
+        prefix_var,     ///< unsigned varint in ProtocolBuffers, @see https://developers.google.com/protocol-buffers/docs/encoding#varints
     };
 
     enum class protocol_options : unsigned

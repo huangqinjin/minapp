@@ -39,6 +39,8 @@ namespace
                   "dynamic_buffer_adaptor should model the boost::asio::DynamicBuffer concept");
 
 
+    const std::size_t size_msb = std::size_t(-1) - (std::size_t(-1) >> 1u);
+
     const std::string crlf = { '\r', '\n' };
 
     std::atomic_ulong id = ATOMIC_VAR_INIT(1);
@@ -268,8 +270,12 @@ void session::read()
         read_prefix(8);
         break;
 
+    case protocol::prefix_var:
+        read_prefix(size_msb);
+        break;
+
     default:
-        std::terminate();
+        this->check(make_error_code(boost::system::errc::protocol_not_supported));
     }
 }
 
@@ -362,9 +368,21 @@ void session::read_delim(const std::string& delim)
 void session::read_prefix(std::size_t len)
 {
     const std::size_t remaining = buf_.internal_input_buffer().size();
-    if (remaining < len)
+    auto p = (const unsigned char*)buf_.internal_input_buffer().data();
+    const bool var = len >= size_msb;
+    if(var) len -= size_msb;
+
+    if (len == 0)
     {
-        boost::asio::async_read(socket_, buf_.prepare_output_buffer(len - remaining), CALLBACK(len)
+        while (len < remaining && (p[len] & 0x80u) != 0) ++len;
+        ++len;
+    }
+
+    if (remaining < len || (var && (p[len - 1] & 0x80u) != 0 && (++len, true)))
+    {
+        std::size_t sz = len - remaining;
+        if (var) len += size_msb;
+        boost::asio::async_read(socket_, buf_.prepare_output_buffer(sz), CALLBACK(len)
         {
             if (!self->check(ec)) return;
             self->buf_.commit_to_internal_input(bytes_transferred);
@@ -373,27 +391,42 @@ void session::read_prefix(std::size_t len)
     }
     else
     {
-        auto p = (const unsigned char*)buf_.internal_input_buffer().data();
         std::uintmax_t data_len = 0;
 
         if(has_options(protocol_options_, protocol_options::use_little_endian))
         {
-            for(unsigned i = 0; i < len; ++i)
-                data_len |= static_cast<std::uintmax_t>(*p++) << (8 * i);
+            if(var)
+            {
+                for(unsigned i = 0; i < len; ++i)
+                    data_len |= static_cast<std::uintmax_t>((*p++) & 0x7fu) << (7 * i);
+            }
+            else
+            {
+                for(unsigned i = 0; i < len; ++i)
+                    data_len |= static_cast<std::uintmax_t>(*p++) << (8 * i);
+            }
+
         }
         else
         {
             p += len;
-            for(unsigned i = 0; i < len; ++i)
-                data_len |= static_cast<std::uintmax_t>(*--p) << (8 * i);
+            if (var)
+            {
+                for(unsigned i = 0; i < len; ++i)
+                    data_len |= static_cast<std::uintmax_t>((*--p) & 0x7fu) << (7 * i);
+            }
+            else
+            {
+                for(unsigned i = 0; i < len; ++i)
+                    data_len |= static_cast<std::uintmax_t>(*--p) << (8 * i);
+            }
         }
 
         const bool ignore = has_options(protocol_options_, protocol_options::ignore_protocol_bytes);
 
         if (data_len > read_buffer_size_)
         {
-            /// \todo log something
-            assert(0);
+            this->check(make_error_code(boost::system::errc::message_size));
         }
         else
         {
