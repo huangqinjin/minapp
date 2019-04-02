@@ -9,7 +9,9 @@
 
 using namespace minapp;
 
-#define CALLBACK(...) [self = shared_from_this(), __VA_ARGS__](const boost::system::error_code& ec, std::size_t bytes_transferred)
+// GCC, clang, MSVC support [ , ## __VA_ARGS__ ] for empty __VA_ARGS__
+#undef CALLBACK
+#define CALLBACK(...) [self = shared_from_this(), ## __VA_ARGS__](const boost::system::error_code& ec, std::size_t bytes_transferred)
 
 namespace
 {
@@ -220,6 +222,11 @@ void session::read()
 {
     if (this->status_ >= status::closing) return;
     this->status_ = status::reading;
+
+    if(!has_options(protocol_options_, protocol_options::do_not_consume_buffer))
+        buf_.consume_whole_external_input();
+    buf_.mark_current_external_input();
+
     switch (protocol_)
     {
     case protocol::none:
@@ -281,23 +288,22 @@ void session::read()
 
 void session::read_some(std::size_t bufsize)
 {
-    const bool consume = !has_options(protocol_options_, protocol_options::do_not_consume_buffer);
     if(buf_.internal_input_buffer().size() > 0)
     {
         buf_.commit_to_external_input(bufsize);
+        buf_.move_to_new_external_input_segment();
         handler()->read(this, buf_);
-        if(consume) buf_.consume_whole_external_input();
         read();
     }
     else
     {
-        socket_.async_read_some(buf_.prepare_output_buffer(bufsize), CALLBACK(consume)
+        socket_.async_read_some(buf_.prepare_output_buffer(bufsize), CALLBACK()
         {
             if (!self->check(ec)) return;
             self->buf_.commit_to_internal_input(bytes_transferred);
             self->buf_.commit_whole_internal_input();
+            self->buf_.move_to_new_external_input_segment();
             self->handler()->read(self.get(), self->buf_);
-            if(consume) self->buf_.consume(self->buf_.size());
             self->read();
         });
     }
@@ -305,24 +311,23 @@ void session::read_some(std::size_t bufsize)
 
 void session::read_fixed(std::size_t bufsize)
 {
-    const bool consume = !has_options(protocol_options_, protocol_options::do_not_consume_buffer);
     const std::size_t remaining = buf_.internal_input_buffer().size();
     if (remaining >= bufsize)
     {
         buf_.commit_to_external_input(bufsize);
+        buf_.move_to_new_external_input_segment();
         handler()->read(this, buf_);
-        if(consume) buf_.consume_whole_external_input();
         read();
     }
     else
     {
-        boost::asio::async_read(socket_, buf_.prepare_output_buffer(bufsize - remaining), CALLBACK(consume)
+        boost::asio::async_read(socket_, buf_.prepare_output_buffer(bufsize - remaining), CALLBACK()
         {
             if (!self->check(ec)) return;
             self->buf_.commit_to_internal_input(bytes_transferred);
             self->buf_.commit_whole_internal_input();
+            self->buf_.move_to_new_external_input_segment();
             self->handler()->read(self.get(), self->buf_);
-            if (consume) self->buf_.consume_whole_external_input();
             self->read();
         });
     }
@@ -340,18 +345,17 @@ void session::read_delim(const std::string& delim)
     std::size_t delim_length = delim.size();
     if (delim_length == 0) return read_some((std::min<std::size_t>)(read_buffer_size_, 65536));
 
-    const bool consume = !has_options(protocol_options_, protocol_options::do_not_consume_buffer);
     const bool ignore = has_options(protocol_options_, protocol_options::ignore_protocol_bytes);
-    auto callback = CALLBACK(delim_length, consume, ignore)
+    auto callback = CALLBACK(delim_length, ignore)
     {
         if (!self->check(ec)) return;
 
         // buf has already been committed and bytes_transferred is the length from the beginning of
         // internal input to the delimiter (including), so it may be smaller than the size of internal input.
         self->buf_.commit_to_external_input(bytes_transferred - delim_length * ignore);
+        self->buf_.move_to_new_external_input_segment();
         self->handler()->read(self.get(), self->buf_);
         self->buf_.commit_to_external_input(delim_length * ignore);
-        if(consume) self->buf_.consume_whole_external_input();
         self->read();
     };
 
@@ -391,19 +395,19 @@ void session::read_prefix(std::size_t len)
     }
     else
     {
-        std::uintmax_t data_len = 0;
+        std::uintmax_t data_size = 0;
 
         if(has_options(protocol_options_, protocol_options::use_little_endian))
         {
             if(var)
             {
                 for(unsigned i = 0; i < len; ++i)
-                    data_len |= static_cast<std::uintmax_t>((*p++) & 0x7fu) << (7 * i);
+                    data_size |= static_cast<std::uintmax_t>((*p++) & 0x7fu) << (7 * i);
             }
             else
             {
                 for(unsigned i = 0; i < len; ++i)
-                    data_len |= static_cast<std::uintmax_t>(*p++) << (8 * i);
+                    data_size |= static_cast<std::uintmax_t>(*p++) << (8 * i);
             }
 
         }
@@ -413,27 +417,26 @@ void session::read_prefix(std::size_t len)
             if (var)
             {
                 for(unsigned i = 0; i < len; ++i)
-                    data_len |= static_cast<std::uintmax_t>((*--p) & 0x7fu) << (7 * i);
+                    data_size |= static_cast<std::uintmax_t>((*--p) & 0x7fu) << (7 * i);
             }
             else
             {
                 for(unsigned i = 0; i < len; ++i)
-                    data_len |= static_cast<std::uintmax_t>(*--p) << (8 * i);
+                    data_size |= static_cast<std::uintmax_t>(*--p) << (8 * i);
             }
         }
 
         const bool ignore = has_options(protocol_options_, protocol_options::ignore_protocol_bytes);
 
-        if (data_len > read_buffer_size_)
+        if (data_size > read_buffer_size_)
         {
             this->check(make_error_code(boost::system::errc::message_size));
         }
         else
         {
             buf_.commit_to_external_input(len);
-            /// \todo too dangerous to consume all, consider more
-            if (ignore) buf_.consume_whole_external_input();
-            read_fixed(data_len);
+            if (ignore) buf_.mark_current_external_input();
+            read_fixed(data_size);
         }
     }
 }
