@@ -27,7 +27,7 @@ const context_ptr& service::context()
 std::future<session_ptr> service::connect_impl(const endpoint& ep, handler_ptr handler, attribute_set attrs)
 {
     auto session = manager_->create(shared_from_this());
-    session->attrs = std::move(attrs);
+    session->attrs.swap(attrs);
     session->handler_ = std::move(handler);
     return session->connect(ep);
 }
