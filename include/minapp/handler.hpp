@@ -5,7 +5,8 @@
 
 namespace minapp
 {
-    class handler : public std::enable_shared_from_this<handler>
+    class MINAPP_API handler :
+        public std::enable_shared_from_this<handler>
     {
     public:
         static handler_ptr dummy();
@@ -25,13 +26,13 @@ namespace minapp
         virtual void close(session* session) {}
     };
 
-    class wrapped_handler : public handler
+    class MINAPP_API wrapped_handler : public handler
     {
     public:
         virtual handler_ptr wrapped() noexcept = 0;
     };
 
-    class noexcept_handler : public wrapped_handler
+    class MINAPP_API noexcept_handler : public wrapped_handler
     {
     public:
         static std::shared_ptr<noexcept_handler> wrap(handler_ptr handler);
@@ -51,7 +52,7 @@ namespace minapp
         void close(session* session) noexcept override {}
     };
 
-    class noexcept_handler_impl : public noexcept_handler
+    class MINAPP_API noexcept_handler_impl : public noexcept_handler
     {
     public:
         void connect(session* session, const endpoint& ep) noexcept final;

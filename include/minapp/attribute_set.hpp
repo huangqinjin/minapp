@@ -1,6 +1,7 @@
 #ifndef MINAPP_ATTRIBUTE_SET_HPP
 #define MINAPP_ATTRIBUTE_SET_HPP
 
+#include "fwd.hpp"
 #include "object.hpp"
 #include "spinlock.hpp"
 #include <mutex>
@@ -9,7 +10,7 @@
 
 namespace minapp
 {
-    class attribute_set
+    class MINAPP_API attribute_set
     {
     public:
         using key_t = std::string_view;

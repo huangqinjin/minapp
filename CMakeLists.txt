@@ -8,14 +8,28 @@ if (NOT CMAKE_BUILD_TYPE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS None Debug Release RelWithDebInfo MinSizeRel)
 endif()
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 find_package(Boost 1.66 REQUIRED COMPONENTS system)
 
-file(GLOB SOURCE_FILES "src/*.cpp")
+set(SOURCE_FILES
+        src/handler.cpp
+        src/session.cpp
+        src/service.cpp
+        src/session_manager.cpp
+        src/attribute_set.cpp
+)
 add_library(${PROJECT_NAME} ${SOURCE_FILES})
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-# https://stackoverflow.com/questions/225432/export-all-symbols-when-creating-a-dll
-set_property(TARGET ${PROJECT_NAME} PROPERTY WINDOWS_EXPORT_ALL_SYMBOLS ON)
+set_target_properties(${PROJECT_NAME} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
+        VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+)
 
 # https://cmake.org/cmake/help/latest/prop_tgt/INTERFACE_INCLUDE_DIRECTORIES.html
 # https://stackoverflow.com/questions/25676277/cmake-target-include-directories-prints-an-error-when-i-try-to-add-the-source
@@ -23,6 +37,12 @@ target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${PROJECT_SO
 target_link_libraries(${PROJECT_NAME} PUBLIC Boost::boost Boost::system)
 target_compile_definitions(${PROJECT_NAME} PUBLIC BOOST_ASIO_NO_DEPRECATED)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+
+get_target_property(PROJECT_LIBRARY_TYPE ${PROJECT_NAME} TYPE)
+string(TOUPPER ${PROJECT_NAME} PROJECT_UPPER_NAME)
+string(MAKE_C_IDENTIFIER ${PROJECT_UPPER_NAME} PROJECT_UPPER_NAME)
+target_compile_definitions(${PROJECT_NAME} INTERFACE ${PROJECT_UPPER_NAME}_${PROJECT_LIBRARY_TYPE})
+
 
 include(GNUInstallDirs)
 set(ConfigPackageLocation ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME})
@@ -59,7 +79,7 @@ configure_package_config_file("${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-confi
 
 write_basic_package_version_file(
         "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
-        COMPATIBILITY AnyNewerVersion)
+        COMPATIBILITY SameMinorVersion)
 
 install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"

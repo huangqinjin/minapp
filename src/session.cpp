@@ -178,7 +178,7 @@ std::future<session_ptr> session::connect(const endpoint& ep)
         {
             self->handler()->error(self.get(), ec);
             boost::system::error_code ignored;
-            self->socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
+            self->socket_.shutdown(socket::shutdown_both, ignored);
             self->socket_.close(ignored);
             promise.set_exception(std::make_exception_ptr(boost::system::system_error(ec)));
         }

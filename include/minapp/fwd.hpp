@@ -1,13 +1,20 @@
-//
-// Created by huangqinjin on 18-6-28.
-//
-
 #ifndef MINAPP_FWD_HPP
 #define MINAPP_FWD_HPP
 
 #include <memory>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
+
+#define MINAPP_EXPORT BOOST_SYMBOL_EXPORT
+#define MINAPP_IMPORT BOOST_SYMBOL_IMPORT
+
+#if defined(minapp_EXPORTS) // defined by cmake DEFINE_SYMBOL property
+#  define MINAPP_API MINAPP_EXPORT
+#elif MINAPP_SHARED_LIBRARY
+#  define MINAPP_API MINAPP_IMPORT
+#else
+#  define MINAPP_API
+#endif
 
 /**
  * reference type:

@@ -6,7 +6,7 @@
 
 namespace minapp
 {
-    class session_manager :
+    class MINAPP_API session_manager :
         public std::enable_shared_from_this<session_manager>
     {
     public:

@@ -9,7 +9,7 @@
 
 namespace minapp
 {
-    class service :
+    class MINAPP_API service :
         public std::enable_shared_from_this<service>
     {
     protected:

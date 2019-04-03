@@ -7,6 +7,11 @@
 
 using namespace minapp;
 
+
+//////////////////////////////////////////////
+///              service
+//////////////////////////////////////////////
+
 service::~service() = default;
 
 const handler_ptr& service::handler()
@@ -73,25 +78,38 @@ std::future<session_ptr> service::connect(
     return connect_impl(ep, std::make_shared<connect_handler>(std::move(callback)), {});
 }
 
-connector::connector(const endpoint& remote, handler_ptr handler, context_ptr ctx)
-    : guard_(boost::asio::make_work_guard(ctx ? *ctx : *(ctx = std::make_shared<::context>())))
+
+//////////////////////////////////////////////
+///              connector
+//////////////////////////////////////////////
+
+namespace
 {
-    remote_ = remote;
-    context_ = std::move(ctx);
-    handler_ = noexcept_handler::wrap(std::move(handler));
-    manager_ = session_manager::create();
+    class connector_impl : public connector
+    {
+    public:
+        boost::asio::executor_work_guard<context::executor_type> guard_;
+        endpoint remote_;
+
+        connector_impl(const endpoint& remote, handler_ptr handler, context_ptr ctx)
+            : guard_(boost::asio::make_work_guard(ctx ? *ctx : *(ctx = std::make_shared<::context>())))
+        {
+            remote_ = remote;
+            context_ = std::move(ctx);
+            handler_ = noexcept_handler::wrap(std::move(handler));
+            manager_ = session_manager::create();
+        }
+    };
 }
 
-connector::~connector() = default;
+const endpoint& connector::remote() const
+{
+    return static_cast<const connector_impl*>(this)->remote_;
+}
 
 connector_ptr connector::create(const endpoint& remote, handler_ptr handler, context_ptr ctx)
 {
-    struct make_public_ctor : connector
-    {
-        make_public_ctor(const endpoint& remote, handler_ptr handler, context_ptr ctx)
-            : connector(remote, std::move(handler), std::move(ctx)) {}
-    };
-    return std::make_shared<make_public_ctor>(remote, std::move(handler), std::move(ctx));
+    return std::make_shared<connector_impl>(remote, std::move(handler), std::move(ctx));
 }
 
 connector_ptr connector::create(handler_ptr handler, context_ptr ctx)
@@ -104,46 +122,48 @@ connector_ptr connector::shared_from_this()
     return std::static_pointer_cast<connector>(service::shared_from_this());
 }
 
-const endpoint& connector::remote() const
-{
-    return remote_;
-}
-
 std::future<session_ptr> connector::connect()
 {
-    return service::connect(remote_);
+    return service::connect(remote());
 }
 
 std::future<session_ptr> connector::connect(handler_ptr handler)
 {
-    return service::connect(remote_, std::move(handler));
+    return service::connect(remote(), std::move(handler));
 }
 
 std::future<session_ptr> connector::connect(std::function<void(session*, boost::system::error_code)> callback)
 {
-    return service::connect(remote_, std::move(callback));
+    return service::connect(remote(), std::move(callback));
 }
 
 
-acceptor::acceptor(handler_ptr handler, context_ptr ctx)
-    : acceptor_(ctx ? *ctx : *(ctx = std::make_shared<::context>())),
-      guard_(boost::asio::make_work_guard(*ctx))
+//////////////////////////////////////////////
+///              acceptor
+//////////////////////////////////////////////
+
+namespace
 {
-    context_ = std::move(ctx);
-    handler_ = noexcept_handler::wrap(std::move(handler));
-    manager_ = session_manager::create();
-}
+    class acceptor_impl : public acceptor
+    {
+    public:
+        boost::asio::ip::tcp::acceptor acceptor_;
+        boost::asio::executor_work_guard<context::executor_type> guard_;
 
-acceptor::~acceptor() = default;
+        acceptor_impl(handler_ptr handler, context_ptr ctx)
+            : acceptor_(ctx ? *ctx : *(ctx = std::make_shared<::context>())),
+              guard_(boost::asio::make_work_guard(*ctx))
+        {
+            context_ = std::move(ctx);
+            handler_ = noexcept_handler::wrap(std::move(handler));
+            manager_ = session_manager::create();
+        }
+    };
+}
 
 acceptor_ptr acceptor::create(handler_ptr handler, context_ptr ctx)
 {
-    struct make_public_ctor : acceptor
-    {
-        make_public_ctor(handler_ptr handler, context_ptr ctx)
-                : acceptor(std::move(handler), std::move(ctx)) {}
-    };
-    return std::make_shared<make_public_ctor>(std::move(handler), std::move(ctx));
+    return std::make_shared<acceptor_impl>(std::move(handler), std::move(ctx));
 }
 
 std::shared_ptr<acceptor> acceptor::shared_from_this()
@@ -153,6 +173,7 @@ std::shared_ptr<acceptor> acceptor::shared_from_this()
 
 void acceptor::bind(const endpoint& ep)
 {
+    auto& acceptor_ = static_cast<acceptor_impl*>(this)->acceptor_;
     acceptor_.open(ep.protocol());
     acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
     acceptor_.bind(ep);
@@ -162,11 +183,13 @@ void acceptor::bind(const endpoint& ep)
 
 void acceptor::unbind()
 {
+    auto& acceptor_ = static_cast<acceptor_impl*>(this)->acceptor_;
     acceptor_.cancel();
 }
 
 void acceptor::accept()
 {
+    auto& acceptor_ = static_cast<acceptor_impl*>(this)->acceptor_;
     acceptor_.async_accept([self = shared_from_this()]
     (const boost::system::error_code& ec, socket socket)
     {

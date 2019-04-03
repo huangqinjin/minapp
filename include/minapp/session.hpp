@@ -23,7 +23,7 @@ namespace minapp
         closed,
     };
 
-    class session
+    class MINAPP_API session
         : public std::enable_shared_from_this<session>,
           public boost::asio::coroutine
     {
@@ -69,16 +69,10 @@ namespace minapp
 
 
         template<typename ...Buffers>
-        void write(persistent_buffer& buffer, Buffers&&... buffers)
+        void write(Buffers&&... buffers)
         {
-            write_queue_.manage(buffer, buffers...);
+            write_queue_.manage(std::forward<Buffers>(buffers)...);
             write();
-        }
-
-        template<typename ...Buffers>
-        void write(persistent_buffer&& buffer, Buffers&&... buffers)
-        {
-            write(buffer, buffers...);
         }
 
         void write(persistent_buffer_list& list)

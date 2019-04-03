@@ -5,14 +5,8 @@
 
 namespace minapp
 {
-    class connector : public service
+    class MINAPP_API connector : public service
     {
-        boost::asio::executor_work_guard<context::executor_type> guard_;
-        endpoint remote_;
-
-        connector(const endpoint& remote, handler_ptr handler, context_ptr ctx);
-        ~connector() override;
-
     public:
         static connector_ptr create(handler_ptr handler, context_ptr ctx = {});
         static connector_ptr create(const endpoint& remote, handler_ptr handler, context_ptr ctx = {});
