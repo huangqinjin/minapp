@@ -1,13 +1,16 @@
-#include <iostream>
 #include <minapp/connector.hpp>
 #include <minapp/acceptor.hpp>
 #include <minapp/handler.hpp>
 #include <minapp/session.hpp>
 #include <minapp/memory_printer.hpp>
+
+#include <iostream>
 #include <mutex>
 #include <thread>
 #include <chrono>
 #include <vector>
+
+#include <boost/endian/conversion.hpp>
 
 std::mutex ostream_lock;
 struct ostream_guard
@@ -28,7 +31,7 @@ class ServerHandler : public noexcept_handler_impl
     {
         LOG(server CONN) << "session[" << session->id() << "] connect from " << ep;
 
-        session->protocol(protocol::prefix_32, protocol_options::use_little_endian);
+        session->protocol(protocol::prefix_32, protocol_options::use_little_endian | protocol_options::do_not_consume_buffer);
     }
 
     void read_impl(session* session, buffer& buf) override
@@ -37,7 +40,7 @@ class ServerHandler : public noexcept_handler_impl
         const void* p = buf.data();
         streambuf_memory_printer{LOG(server READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
 
-        auto msg = minapp::persist(std::vector<char>((const char*)p, ((const char*)p) + size));
+        auto msg = persist(buf.whole());
         session->write(msg);
     }
 
@@ -120,14 +123,35 @@ int main()
     std::thread([client] {
         auto future = client->connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 2333));
         auto session = future.get();
-        for(int i = 0; i < 10; ++i)
-        {
-            std::string buf = "    sent " + std::to_string(i);
-            uint32_t size = buf.size() - 4;
-            std::memcpy(&buf[0], &size, 4);
-            auto msg = minapp::persist(buf);
-            session->write(msg);
 
+        struct header
+        {
+            std::uint32_t len;
+            std::int32_t type;
+
+            static persistent_buffer make(std::size_t len, int type)
+            {
+                header h;
+                h.len = boost::endian::native_to_little(len + sizeof(h) - sizeof(h.len));
+                h.type = boost::endian::native_to_little(type);
+                return persist(h);
+            }
+        };
+
+        auto msg = persist("sent");
+
+        for(int i = 0; i <= 10; ++i)
+        {
+            auto random = persist(std::string(i, 'x'));
+            auto list = make_list(msg, random);
+            auto head = header::make(boost::asio::buffer_size(list), i);
+            list.push_front(head);
+
+            assert(head.storage().type() == typeid(header));
+            assert(msg.storage().type() == typeid(char[5]));
+            assert(random.storage().type() == typeid(std::string));
+
+            session->write(list);
             std::this_thread::sleep_for(std::chrono::seconds(2));
         }
 

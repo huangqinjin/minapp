@@ -13,31 +13,37 @@ namespace minapp
     class persistent_buffer_manager
     {
         boost::pool<> pool;
+        std::pair<persistent_buffer*, persistent_buffer*> cached_buffers_pool;
         persistent_buffer_list cached_buffers_list;
-        persistent_buffer_list managed_buffers_list_1;
-        persistent_buffer_list managed_buffers_list_2;
+        persistent_buffer_list managed_buffers_list;
+        persistent_buffer_list marked_buffers_list;
         spinlock pool_guard;
         spinlock cached_buffers_list_guard;
-        spinlock managed_buffers_list_1_guard;
-        long marker_;
-        std::pair<persistent_buffer*, persistent_buffer*> cached_buffers;
+        spinlock managed_buffers_list_guard;
+        spinlock marked_buffers_list_guard;
+        long marker;
 
     public:
-        persistent_buffer_manager(unsigned cached = 8)
-            : pool(sizeof(persistent_buffer)), marker_(0)
+        explicit persistent_buffer_manager(unsigned cached = 8)
+            : pool(sizeof(persistent_buffer)), marker(0)
         {
             persistent_buffer* p = (persistent_buffer*) pool.ordered_malloc(cached);
-            cached_buffers.first = p;
-            cached_buffers.second = p + cached;
-            while (p < cached_buffers.second)
+            cached_buffers_pool.first = p;
+            cached_buffers_pool.second = p + cached;
+            while (p < cached_buffers_pool.second)
                 cached_buffers_list.push_front(*::new((void*)p++) persistent_buffer);
         }
 
+        ////////////////////////////////////////////////////////////////////
+        /// manage() & mark() & marked() may be called in arbitrary threads,
+        /// but marked() & clear_marked() should be protected by marker such
+        /// that no concurrent call to them.
+        ////////////////////////////////////////////////////////////////////
         void manage(persistent_buffer& b)
         {
             persistent_buffer& buf = hold_buffer(b);
-            std::lock_guard<spinlock> guard(managed_buffers_list_1_guard);
-            managed_buffers_list_1.push_back(buf);
+            std::lock_guard<spinlock> guard(managed_buffers_list_guard);
+            managed_buffers_list.push_back(buf);
         }
 
         void manage(persistent_buffer&& b)
@@ -46,14 +52,11 @@ namespace minapp
         }
 
         template<typename ...Buffers>
-        void manage(Buffers&&... buffers)
+        std::enable_if_t<sizeof...(Buffers) >= 2> manage(Buffers&&... buffers)
         {
-            persistent_buffer_list tmp;
-            for (persistent_buffer& b : { std::ref(buffers)... })
-                tmp.push_back(hold_buffer(b));
-
-            std::lock_guard<spinlock> guard(managed_buffers_list_1_guard);
-            managed_buffers_list_1.splice(managed_buffers_list_1.end(), tmp);  // Constant time
+            persistent_buffer_list tmp = make_list(hold_buffer(buffers)...);
+            std::lock_guard<spinlock> guard(managed_buffers_list_guard);
+            managed_buffers_list.splice(managed_buffers_list.end(), tmp);  // Constant time
         }
 
         void manage(persistent_buffer_list& list)
@@ -62,8 +65,8 @@ namespace minapp
             for (persistent_buffer& b : list)
                 tmp.push_back(hold_buffer(b));
 
-            std::lock_guard<spinlock> guard(managed_buffers_list_1_guard);
-            managed_buffers_list_1.splice(managed_buffers_list_1.end(), tmp);  // Constant time
+            std::lock_guard<spinlock> guard(managed_buffers_list_guard);
+            managed_buffers_list.splice(managed_buffers_list.end(), tmp);  // Constant time
         }
 
         void manage(persistent_buffer_list&& list)
@@ -71,33 +74,29 @@ namespace minapp
             return manage(list);
         }
 
-        long marker()
-        {
-            return marker_;
-        }
-
         long mark()
         {
-            if (managed_buffers_list_2.empty())
+            std::lock_guard<spinlock> guard(marked_buffers_list_guard);
+            if (marked_buffers_list.empty())
             {
-                std::lock_guard<spinlock> guard(managed_buffers_list_1_guard);
-                if (!managed_buffers_list_1.empty())
+                std::lock_guard<spinlock> guard(managed_buffers_list_guard);
+                if (!managed_buffers_list.empty())
                 {
-                    managed_buffers_list_2 = std::move(managed_buffers_list_1);
-                    return ++marker_;
+                    marked_buffers_list.swap(managed_buffers_list);
+                    return marker == std::numeric_limits<long>::max() ? marker = 1 : ++marker;
                 }
             }
-            return -marker_;
+            return -marker;
         }
 
         persistent_buffer_list& marked()
         {
-            return managed_buffers_list_2;
+            return marked_buffers_list;
         }
 
         void clear_marked()
         {
-            managed_buffers_list_2.clear_and_dispose([this](persistent_buffer_list::pointer p)
+            marked_buffers_list.clear_and_dispose([this](persistent_buffer_list::pointer p)
             {
                 free_buffer(p);
             });
@@ -111,8 +110,8 @@ namespace minapp
             };
 
             cached_buffers_list.clear_and_dispose(deleter);
-            managed_buffers_list_1.clear_and_dispose(deleter);
-            managed_buffers_list_2.clear_and_dispose(deleter);
+            managed_buffers_list.clear_and_dispose(deleter);
+            marked_buffers_list.clear_and_dispose(deleter);
         }
 
     private:
@@ -142,15 +141,14 @@ namespace minapp
                 *p = b;
             }
 
-            p->underlying() = std::move(b.underlying());
             return *p;
         }
 
         void free_buffer(persistent_buffer* p)
         {
-            if (p >= cached_buffers.first && p < cached_buffers.second)
+            if (p >= cached_buffers_pool.first && p < cached_buffers_pool.second)
             {
-                p->underlying().clear();
+                p->storage() = {};
                 std::lock_guard<spinlock> guard(cached_buffers_list_guard);
                 cached_buffers_list.push_front(*p);
             }
