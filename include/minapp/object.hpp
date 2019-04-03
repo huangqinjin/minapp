@@ -33,6 +33,18 @@ class object
     template<typename T>
     class holder : public placeholder
     {
+        template<std::size_t I, std::size_t N, typename U>
+        U& get(U(&a)[N]) { return a[I]; }
+
+        template<std::size_t I, std::size_t N, typename U>
+        U&& get(U(&&a)[N]) { return static_cast<U&&>(a[I]); }
+
+        template<typename ...Args>
+        struct is_one : public std::false_type { using type = void; };
+
+        template<typename Arg>
+        struct is_one<Arg> : public std::true_type { using type = Arg; };
+
         T v;
         const std::type_info& type() const noexcept final { return typeid(T); }
 
@@ -44,6 +56,9 @@ class object
         template<typename... Args>
         explicit holder(std::false_type, Args&&... args) : v{std::forward<Args>(args)...} {}
 
+        template<typename A, std::size_t... I>
+        explicit holder(std::index_sequence<I...>, A&& a) : v{get<I>(static_cast<A&&>(a))...} {}
+
     public:
         T& value() noexcept
         {
@@ -53,7 +68,16 @@ class object
         template<typename... Args>
         static auto create(Args&&... args)
         {
-            return new holder(std::is_constructible<T, Args&&...>{}, std::forward<Args>(args)...);
+            using O = is_one<Args...>;
+            using U = rmcvr<typename O::type>;
+            if constexpr (std::is_array_v<T> && O::value && std::is_same_v<T, U>)
+            {
+                return new holder(std::make_index_sequence<std::extent_v<U>>{}, std::forward<Args>(args)...);
+            }
+            else
+            {
+                return new holder(std::is_constructible<T, Args&&...>{}, std::forward<Args>(args)...);
+            }
         }
     };
 
