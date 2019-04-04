@@ -20,103 +20,124 @@ struct ostream_guard
     std::ostream& stream() { return std::cout; }
 };
 
-#define LOG(TAG) ostream_guard{}.stream() << __FILE__ << ':' << __LINE__ << " - [" << #TAG << "] "
+#define LOG(TAG) ostream_guard{}.stream() << __FILE__ << ':' << __LINE__ << " [" << #TAG << "] - "
 
 
 using namespace minapp;
 
-class ServerHandler : public noexcept_handler_impl
+class logging_handler final : public noexcept_handler_impl
 {
+public:
+    class named : public handler
+    {
+    public:
+        virtual std::string name() const = 0;
+    };
+
+    using named_handler_ptr = std::shared_ptr<named>;
+
+    named_handler_ptr const h;
+
+    explicit logging_handler(named_handler_ptr h) : h(std::move(h)) {}
+
+    static handler_ptr wrap(named_handler_ptr h)
+    {
+        return std::make_shared<logging_handler>(std::move(h));
+    }
+
+    template<typename Handler>
+    static handler_ptr wrap()
+    {
+        return wrap(std::make_shared<Handler>());
+    }
+
+    handler_ptr wrapped() noexcept override
+    {
+        return h;
+    }
+
     void connect_impl(session* session, const endpoint& ep) override
     {
-        LOG(server CONN) << "session[" << session->id() << "] connect from " << ep;
-
-        session->protocol(protocol::prefix_32, protocol_options::use_little_endian | protocol_options::do_not_consume_buffer);
+        LOG(CONN) << '[' << h->name() << ':' << session->id() << "] connect to " << ep;
+        h->connect(session, ep);
     }
 
     void read_impl(session* session, buffer& buf) override
     {
-        unsigned size = buf.size();
+        std::size_t size = buf.size();
         const void* p = buf.data();
-        streambuf_memory_printer{LOG(server READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
-
-        auto msg = persist(buf.whole());
-        session->write(msg);
+        streambuf_memory_printer{LOG(READ) << '[' << h->name() << ':' << session->id() << "] bufsize = " << size << '\n'}(p, size);
+        h->read(session, buf);
     }
 
     void write_impl(session* session, persistent_buffer_list& list) override
     {
         for(auto& buf : list)
         {
-            unsigned size = buf.size();
+            std::size_t size = buf.size();
             const void* p = buf.data();
-            streambuf_memory_printer{(LOG(server WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
+            streambuf_memory_printer{(LOG(WRITE) << '[' << h->name() << ':' << session->id() << "] bufsize = " << size << '\n')}(p, size);
         }
+        h->write(session, list);
     }
 
     void except_impl(session* session, std::exception& e) override
     {
-        LOG(server EXCEPT) << "session[" << session->id() << "] " << e.what();
+        LOG(EXCEPT) << '[' << h->name() << ':' << session->id() << "] " << e.what();
+        h->except(session, e);
     }
 
     void error_impl(session* session, boost::system::error_code ec) override
     {
-        LOG(server ERROR) << "session[" << session->id() << "] " << ec.message();
+        LOG(ERROR) << '[' << h->name() << ':' << session->id() << "] " << ec.message();
+        h->error(session, ec);
     }
 
     void close_impl(session* session) override
     {
-        LOG(server CLOSE) << "session[" << session->id() << "]";
+        LOG(CLOSE) << '[' << h->name() << ':' << session->id() << "] ";
+        h->close(session);
     }
 };
 
-class ClientHandler : public minapp::noexcept_handler_impl
+
+class ServerHandler : public logging_handler::named
 {
-    void connect_impl(session* session, const endpoint& ep) override
+    std::string name() const override
     {
-        LOG(client CONN) << "session[" << session->id() << "] connect to " << ep;
+        return "server";
+    }
 
+    void connect(session* session, const endpoint& ep) override
+    {
+        session->protocol(protocol::prefix_32, protocol_options::use_little_endian | protocol_options::do_not_consume_buffer);
+    }
+
+    void read(session* session, buffer& buf) override
+    {
+        auto msg = persist(buf.whole());
+        session->write(msg);
+    }
+};
+
+class ClientHandler : public logging_handler::named
+{
+    std::string name() const override
+    {
+        return "client";
+    }
+
+    void connect(session* session, const endpoint& ep) override
+    {
         session->protocol(protocol::prefix_32, protocol_options::use_little_endian);
-    }
-
-    void read_impl(session* session, buffer& buf) override
-    {
-        unsigned size = buf.size();
-        const void* p = buf.data();
-        streambuf_memory_printer{LOG(client READ) << "session[" << session->id() << "] bufsize = " << size << '\n'}(p, size);
-    }
-
-    void write_impl(session* session, persistent_buffer_list& list) override
-    {
-        for(auto& buf : list)
-        {
-            unsigned size = buf.size();
-            const void* p = buf.data();
-            streambuf_memory_printer{(LOG(client WRITE) << "session[" << session->id() << "] bufsize = " << size << '\n')}(p, size);
-        }
-    }
-
-    void except_impl(session* session, std::exception& e) override
-    {
-        LOG(client EXCEPT) << "session[" << session->id() << "] " << e.what();
-    }
-
-    void error_impl(session* session, boost::system::error_code ec) override
-    {
-        LOG(client ERROR) << "session[" << session->id() << "] " << ec.message();
-    }
-
-    void close_impl(session* session) override
-    {
-        LOG(client CLOSE) << "session[" << session->id() << "]";
     }
 };
 
 
 int main()
 {
-    auto server = minapp::acceptor::create(std::make_shared<ServerHandler>());
-    auto client = minapp::connector::create(std::make_shared<ClientHandler>());
+    auto server = minapp::acceptor::create(logging_handler::wrap<ServerHandler>());
+    auto client = minapp::connector::create(logging_handler::wrap<ClientHandler>());
 
     server->bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 2333));
 
