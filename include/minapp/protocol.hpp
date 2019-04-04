@@ -25,6 +25,7 @@ namespace minapp
         do_not_consume_buffer = 1,
         ignore_protocol_bytes = do_not_consume_buffer << 1,     // supports protocol::prefix_* and protocol::delim_*
         use_little_endian = ignore_protocol_bytes << 1,         // supports protocol::prefix_*
+        include_prefix_in_payload = use_little_endian << 1,     // supports protocol::prefix_*
     };
 
     inline unsigned to_integer(protocol_options o) { return static_cast<unsigned>(o); }

@@ -448,6 +448,10 @@ void session::read_prefix(std::size_t len)
             self->read_prefix(len);
         });
     }
+    else if (len > 8 + var)
+    {
+        this->check(make_error_code(boost::system::errc::value_too_large));
+    }
     else
     {
         std::uintmax_t data_size = 0;
@@ -464,7 +468,6 @@ void session::read_prefix(std::size_t len)
                 for(unsigned i = 0; i < len; ++i)
                     data_size |= static_cast<std::uintmax_t>(*p++) << (8 * i);
             }
-
         }
         else
         {
@@ -481,16 +484,20 @@ void session::read_prefix(std::size_t len)
             }
         }
 
-        const bool ignore = has_options(protocol_options_, protocol_options::ignore_protocol_bytes);
-
-        if (data_size > read_buffer_size_)
+        if (has_options(protocol_options_, protocol_options::include_prefix_in_payload) &&
+            ((data_size < len) || (data_size -= len, false)))
+        {
+            this->check(make_error_code(boost::system::errc::bad_message));
+        }
+        else if (data_size > read_buffer_size_)
         {
             this->check(make_error_code(boost::system::errc::message_size));
         }
         else
         {
             buf_.commit_to_external_input(len);
-            if (ignore) buf_.mark_current_external_input();
+            if (has_options(protocol_options_, protocol_options::ignore_protocol_bytes))
+                buf_.mark_current_external_input();
             read_fixed(data_size);
         }
     }
