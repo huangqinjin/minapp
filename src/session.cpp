@@ -29,6 +29,7 @@ namespace
     struct dynamic_buffer_adaptor
     {
         triple_buffer& impl;
+        const std::size_t maximum;
 
         using const_buffers_type = triple_buffer::const_buffers_type;
         using mutable_buffers_type = triple_buffer::mutable_buffers_type;
@@ -36,12 +37,40 @@ namespace
         dynamic_buffer_adaptor(const dynamic_buffer_adaptor&) = delete;
         dynamic_buffer_adaptor(dynamic_buffer_adaptor&&) = default;
 
-        const_buffers_type data() const { return impl.internal_input_buffer(); }
-        std::size_t size() const { return impl.internal_input_buffer().size(); }
-        std::size_t max_size() const { return impl.max_size() - impl.external_input_buffer().size(); }
-        std::size_t capacity() const { return impl.capacity() - impl.external_input_buffer().size(); }
-        mutable_buffers_type prepare(std::size_t n) { return impl.prepare_output_buffer(n); }
-        void commit(std::size_t n) { impl.commit_to_internal_input(n); }
+        const_buffers_type data() const
+        {
+            return impl.internal_input_buffer();
+        }
+
+        std::size_t size() const
+        {
+            return impl.internal_input_buffer().size();
+        }
+
+        std::size_t max_size() const
+        {
+            return (std::min)(impl.max_size() - impl.external_input_buffer().size(), maximum);
+        }
+
+        std::size_t capacity() const
+        {
+            // Note that capacity may be greater than max_size
+            return impl.capacity() - impl.external_input_buffer().size();
+        }
+
+        mutable_buffers_type prepare(std::size_t n)
+        {
+            // Note that size may be greater than max_size
+            if (size() > max_size() || max_size() - size() < n)
+                throw std::length_error("dynamic_buffer too long");
+            return impl.prepare_output_buffer(n);
+        }
+
+        void commit(std::size_t n)
+        {
+            impl.commit_to_internal_input(n);
+        }
+
         void consume(std::size_t n); // [async_]read_util() do not need consume, and it's requirement
                                      // of DynamicBuffer is not compatible with triple_buffer.
                                      // Declare it to meet the DynamicBuffer requirements and no define
@@ -53,6 +82,7 @@ namespace
     struct dynamic_buffer_adaptor
     {
         triple_buffer& impl;
+        const std::size_t maximum;
 
         using const_buffers_type = triple_buffer::const_buffers_type;
         using mutable_buffers_type = triple_buffer::mutable_buffers_type;
@@ -69,11 +99,33 @@ namespace
                     impl.internal_input_buffer().data(), size()) + pos, n);
         }
 
-        std::size_t size() const { return impl.size() - impl.external_input_buffer().size(); }
-        std::size_t max_size() const { return impl.max_size() - impl.external_input_buffer().size(); }
-        std::size_t capacity() const { return impl.capacity() - impl.external_input_buffer().size(); }
-        void grow(std::size_t n) { impl.grow_output_buffer(n); }
-        void shrink(std::size_t n) { impl.shrink_output_buffer(n); }
+        std::size_t size() const
+        {
+            return (std::min)(impl.size() - impl.external_input_buffer().size(), max_size());
+        }
+
+        std::size_t max_size() const
+        {
+            return (std::min)(impl.max_size() - impl.external_input_buffer().size(), maximum);
+        }
+
+        std::size_t capacity() const
+        {
+            return (std::min)(impl.capacity() - impl.external_input_buffer().size(), max_size());
+        }
+
+        void grow(std::size_t n)
+        {
+            if (max_size() - size() < n)
+                throw std::length_error("dynamic_buffer too long");
+            impl.grow_output_buffer(n);
+        }
+
+        void shrink(std::size_t n)
+        {
+            impl.shrink_output_buffer(n);
+        }
+
         void consume(std::size_t n); // [async_]read_util() do not need consume, and it's requirement
                                      // of DynamicBuffer is not compatible with triple_buffer.
                                      // Declare it to meet the DynamicBuffer requirements and no define
@@ -279,7 +331,7 @@ void session::read()
         break;
 
     case protocol::any:
-        read_some((std::min<std::size_t>)(read_buffer_size_, 65536));
+        read_some(read_buffer_size_);
         break;
 
     case protocol::fixed:
@@ -333,6 +385,7 @@ void session::read()
 
 void session::read_some(std::size_t bufsize)
 {
+    assert(bufsize <= read_buffer_size_);
     if(buf_.internal_input_buffer().size() > 0)
     {
         buf_.commit_to_external_input(bufsize);
@@ -356,6 +409,7 @@ void session::read_some(std::size_t bufsize)
 
 void session::read_fixed(std::size_t bufsize)
 {
+    assert(bufsize <= read_buffer_size_);
     const std::size_t remaining = buf_.internal_input_buffer().size();
     if (remaining >= bufsize)
     {
@@ -388,7 +442,7 @@ void session::read_delim(char delim)
 void session::read_delim(const std::string& delim)
 {
     std::size_t delim_length = delim.size();
-    if (delim_length == 0) return read_some((std::min<std::size_t>)(read_buffer_size_, 65536));
+    if (delim_length == 0) return read_some(read_buffer_size_);
 
     const bool ignore = has_options(protocol_options_, protocol_options::ignore_protocol_bytes);
     auto callback = CALLBACK(delim_length, ignore)
@@ -416,11 +470,13 @@ void session::read_delim(const std::string& delim)
 
     if (delim_length == 1)
     {
-        boost::asio::async_read_until(socket_, dynamic_buffer_adaptor{buf_}, delim[0], std::move(callback));
+        boost::asio::async_read_until(socket_, dynamic_buffer_adaptor{buf_, read_buffer_size_},
+                                      delim[0], std::move(callback));
     }
     else
     {
-        boost::asio::async_read_until(socket_, dynamic_buffer_adaptor{buf_}, delim, std::move(callback));
+        boost::asio::async_read_until(socket_, dynamic_buffer_adaptor{buf_, read_buffer_size_},
+                                      delim, std::move(callback));
     }
 }
 
@@ -439,14 +495,21 @@ void session::read_prefix(std::size_t len)
 
     if (remaining < len || (var && (p[len - 1] & 0x80u) != 0 && (++len, true)))
     {
-        std::size_t sz = len - remaining;
-        if (var) len += size_msb;
-        boost::asio::async_read(socket_, buf_.prepare_output_buffer(sz), CALLBACK(len)
+        if (len > read_buffer_size_)
         {
-            if (!self->check(ec)) return;
-            self->buf_.commit_to_internal_input(bytes_transferred);
-            self->read_prefix(len);
-        });
+            this->check(make_error_code(boost::system::errc::message_size));
+        }
+        else
+        {
+            std::size_t sz = len - remaining;
+            if (var) len += size_msb;
+            boost::asio::async_read(socket_, buf_.prepare_output_buffer(sz), CALLBACK(len)
+            {
+                if (!self->check(ec)) return;
+                self->buf_.commit_to_internal_input(bytes_transferred);
+                self->read_prefix(len);
+            });
+        }
     }
     else if (len > 8 + var)
     {
@@ -489,7 +552,7 @@ void session::read_prefix(std::size_t len)
         {
             this->check(make_error_code(boost::system::errc::bad_message));
         }
-        else if (data_size > read_buffer_size_)
+        else if (data_size + len > read_buffer_size_)
         {
             this->check(make_error_code(boost::system::errc::message_size));
         }
