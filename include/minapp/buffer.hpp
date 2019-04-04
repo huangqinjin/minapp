@@ -26,8 +26,12 @@ namespace minapp
          *   +----------------+----------------+--------+----------+
          *
          *   external input: access from handler::read()
-         *   internal input: commit from output in asio::[async_]read_until()
-         *   output: fill by asio::[async_]read()
+         *   internal input: commit from output in asio::[async_]read_until() for DynamicBuffer_v1
+         *   output: fill by asio::[async_]read[_until](), should not contain any valid data since
+         *           it will be overwritten and callbacks of read should commit all valid data into
+         *           the internal input buffer.
+         *
+         *   @note internal input and output are used as a single buffer to support DynamicBuffer_v2.
          */
         std::vector<char> storage;
         std::size_t external_input_size = 0;

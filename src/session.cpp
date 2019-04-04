@@ -1,3 +1,12 @@
+#include <boost/version.hpp>
+#if BOOST_VERSION >= 107000
+#  ifndef BOOST_ASIO_NO_DYNAMIC_BUFFER_V1
+#    define BOOST_ASIO_NO_DYNAMIC_BUFFER_V1
+#  endif
+#else
+#  undef BOOST_ASIO_NO_DYNAMIC_BUFFER_V1
+#endif
+
 #include <minapp/handler.hpp>
 #include <minapp/session.hpp>
 #include <minapp/service.hpp>
@@ -15,6 +24,8 @@ using namespace minapp;
 
 namespace
 {
+#ifndef BOOST_ASIO_NO_DYNAMIC_BUFFER_V1
+
     struct dynamic_buffer_adaptor
     {
         triple_buffer& impl;
@@ -36,6 +47,40 @@ namespace
                                      // Declare it to meet the DynamicBuffer requirements and no define
                                      // it to catch error if it is called anywhere.
     };
+
+#else
+
+    struct dynamic_buffer_adaptor
+    {
+        triple_buffer& impl;
+
+        using const_buffers_type = triple_buffer::const_buffers_type;
+        using mutable_buffers_type = triple_buffer::mutable_buffers_type;
+
+        mutable_buffers_type data(std::size_t pos, std::size_t n)
+        {
+            return boost::asio::buffer(boost::asio::buffer(
+                    impl.internal_input_buffer().data(), size()) + pos, n);
+        }
+
+        const_buffers_type data(std::size_t pos, std::size_t n) const
+        {
+            return boost::asio::buffer(boost::asio::buffer(
+                    impl.internal_input_buffer().data(), size()) + pos, n);
+        }
+
+        std::size_t size() const { return impl.size() - impl.external_input_buffer().size(); }
+        std::size_t max_size() const { return impl.max_size() - impl.external_input_buffer().size(); }
+        std::size_t capacity() const { return impl.capacity() - impl.external_input_buffer().size(); }
+        void grow(std::size_t n) { impl.grow_output_buffer(n); }
+        void shrink(std::size_t n) { impl.shrink_output_buffer(n); }
+        void consume(std::size_t n); // [async_]read_util() do not need consume, and it's requirement
+                                     // of DynamicBuffer is not compatible with triple_buffer.
+                                     // Declare it to meet the DynamicBuffer requirements and no define
+                                     // it to catch error if it is called anywhere.
+    };
+
+#endif
 
     static_assert(boost::asio::is_dynamic_buffer<dynamic_buffer_adaptor>::value,
                   "dynamic_buffer_adaptor should model the boost::asio::DynamicBuffer concept");
@@ -350,6 +395,11 @@ void session::read_delim(const std::string& delim)
     {
         if (!self->check(ec)) return;
 
+#ifdef BOOST_ASIO_NO_DYNAMIC_BUFFER_V1
+        // Unlike DynamicBuffer_v1, the whole output buffer of DynamicBuffer_v2 contains valid data
+        // since it had been shrunk before the callback. So commit the whole output buffer.
+        self->buf_.commit_to_internal_input(self->buf_.output_buffer().size());
+#endif
         // buf has already been committed and bytes_transferred is the length from the beginning of
         // internal input to the delimiter (including), so it may be smaller than the size of internal input.
         self->buf_.commit_to_external_input(bytes_transferred - delim_length * ignore);
@@ -358,6 +408,11 @@ void session::read_delim(const std::string& delim)
         self->buf_.commit_to_external_input(delim_length * ignore);
         self->read();
     };
+
+#ifdef BOOST_ASIO_NO_DYNAMIC_BUFFER_V1
+    // DynamicBuffer_v2 treats the output buffer as valid data, so remove it before read.
+    buf_.shrink_output_buffer(buf_.output_buffer().size());
+#endif
 
     if (delim_length == 1)
     {
