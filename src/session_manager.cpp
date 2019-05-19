@@ -80,7 +80,7 @@ session_ptr session_manager::get(unsigned long id)
     return session_ptr{};
 }
 
-std::size_t session_manager::foreach(std::function<bool(session*)> const& f)
+std::size_t session_manager::foreach(object::fn<bool(&)(session*)> f)
 {
     std::size_t c = 0;
     session_comparator comp{};

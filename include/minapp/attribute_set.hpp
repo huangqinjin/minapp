@@ -141,7 +141,7 @@ namespace minapp
          * @param key the key with which the specified value is to be associated
          * @param f the function to compute a value
          */
-        void compute(key_t key, std::function<void(value_t&)> const& f);
+        void compute(key_t key, object::fn<void(&)(value_t&)> f);
 
         /**
          * @brief Iterate all entries.
@@ -152,7 +152,7 @@ namespace minapp
          *          or modify this set in the function body.
          * @return the number of entries iterated.
          */
-        std::size_t foreach(std::function<bool(key_t, value_t)> const& f) const;
+        std::size_t foreach(object::fn<bool(&)(key_t, value_t)> f) const;
 
         /**
          * @brief Iterate all entries that keys are prefixed by the specified.
@@ -164,7 +164,7 @@ namespace minapp
          *          or modify this set in the function body.
          * @return the number of entries iterated.
          */
-        std::size_t foreach(key_t prefix, std::function<bool(key_t, value_t)> const& f) const;
+        std::size_t foreach(key_t prefix, object::fn<bool(&)(key_t, value_t)> f) const;
 
         /**
          * @brief Iterate all entries that keys are between min and max.
@@ -178,7 +178,7 @@ namespace minapp
          * @return the number of entries iterated.
          */
         std::size_t foreach(key_t (min), key_t (max), bool include_min, bool include_max,
-                            std::function<bool(key_t, value_t)> const& f) const;
+                            object::fn<bool(&)(key_t, value_t)> f) const;
 
 
         /// Value can't be reference type and always copy the value for safety.

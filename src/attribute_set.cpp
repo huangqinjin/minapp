@@ -186,7 +186,7 @@ bool attribute_set::replace(key_t key, value_t oldval, value_t newval) noexcept
     return false;
 }
 
-void attribute_set::compute(key_t key, std::function<void(value_t&)> const& f)
+void attribute_set::compute(key_t key, object::fn<void(&)(value_t&)> f)
 {
     std::unique_ptr<nvp> p;
     value_t value;
@@ -219,7 +219,7 @@ void attribute_set::compute(key_t key, std::function<void(value_t&)> const& f)
     }
 }
 
-std::size_t attribute_set::foreach(std::function<bool(key_t, value_t)> const& f) const
+std::size_t attribute_set::foreach(object::fn<bool(&)(key_t, value_t)> f) const
 {
     std::size_t c = 0;
     guard.lock();
@@ -241,7 +241,7 @@ std::size_t attribute_set::foreach(std::function<bool(key_t, value_t)> const& f)
     return c;
 }
 
-std::size_t attribute_set::foreach(key_t prefix, std::function<bool(key_t, value_t)> const& f) const
+std::size_t attribute_set::foreach(key_t prefix, object::fn<bool(&)(key_t, value_t)> f) const
 {
     std::size_t c = 0;
     guard.lock();
@@ -270,7 +270,7 @@ std::size_t attribute_set::foreach(key_t prefix, std::function<bool(key_t, value
 }
 
 std::size_t attribute_set::foreach(key_t (min), key_t (max), bool include_min, bool include_max,
-                                   std::function<bool(key_t, value_t)> const& f) const
+                                   object::fn<bool(&)(key_t, value_t)> f) const
 {
     std::size_t c = 0;
     guard.lock();

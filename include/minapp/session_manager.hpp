@@ -2,7 +2,7 @@
 #define MINAPP_SESSION_MANAGER_HPP
 
 #include "fwd.hpp"
-#include <functional>
+#include "object.hpp"
 
 namespace minapp
 {
@@ -21,7 +21,7 @@ namespace minapp
                 true: continue;
                 false: stop.
         */
-        std::size_t foreach(std::function<bool(session*)> const& f);
+        std::size_t foreach(object::fn<bool(&)(session*)> f);
     };
 }
 
