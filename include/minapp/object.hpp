@@ -4,19 +4,68 @@
 #include <type_traits>
 #include <atomic>
 #include <typeinfo>
-#include <utility>        // move, exchange
+#include <utility>        // move, exchange, in_place_type_t
 #include <memory>         // uninitialized_value_construct_n, destroy_n
 #include <new>            // operator new, operator delete, align_val_t, bad_array_new_length
 
 class bad_object_cast : public std::exception {};
+class object_not_fn : public bad_object_cast {};
 
 class object
 {
+protected:
+    template<typename ...Args>
+    struct is_args_one : std::false_type { using type = void; };
+
+    template<typename Arg>
+    struct is_args_one<Arg> : std::true_type { using type = Arg; };
+
+    template<typename T>
+    struct is_in_place_type : std::false_type { using type = T; };
+
+    template<typename T>
+    struct is_in_place_type<std::in_place_type_t<T>> : std::true_type { using type = T; };
+
     template<typename T>
     using rmcvr = std::remove_cv_t<std::remove_reference_t<T>>;
 
     template<typename T, typename U = rmcvr<T>>
-    using enable = std::enable_if_t<!std::is_same_v<object, U>, U>;
+    using enable = std::enable_if_t<!std::is_base_of_v<object, U> && !is_in_place_type<U>::value, U>;
+
+    template<typename T>
+    class held
+    {
+        T t;
+
+        template<std::size_t I, std::size_t N, typename U>
+        static U& get(U(&a)[N]) { return a[I]; }
+
+        template<std::size_t I, std::size_t N, typename U>
+        static U&& get(U(&&a)[N]) { return static_cast<U&&>(a[I]); }
+
+        template<typename... Args>
+        held(std::true_type, Args&&... args) : t(std::forward<Args>(args)...) {}
+
+        template<typename... Args>
+        held(std::false_type, Args&&... args) : t{std::forward<Args>(args)...} {}
+
+        template<typename A, std::size_t... I>
+        held(std::index_sequence<I...>, A&& a) : t{get<I>(static_cast<A&&>(a))...} {}
+
+    public:
+        using type = T;
+
+        T& value() noexcept { return t; }
+
+        template<typename... Args, typename U = rmcvr<typename is_args_one<Args...>::type>,
+                 typename = std::enable_if_t<std::is_array_v<T> && std::is_same_v<T, U>>>
+        held(int&&, Args&&... args)
+            : held(std::make_index_sequence<std::extent_v<U>>{}, std::forward<Args>(args)...) {}
+
+        template<typename... Args>
+        held(const int&, Args&&... args)
+            : held(std::is_constructible<T, Args&&...>{}, std::forward<Args>(args)...) {}
+    };
 
     class placeholder
     {
@@ -31,53 +80,20 @@ class object
     } *p;
 
     template<typename T>
-    class holder : public placeholder
+    class holder : public placeholder, public held<T>
     {
-        template<std::size_t I, std::size_t N, typename U>
-        U& get(U(&a)[N]) { return a[I]; }
-
-        template<std::size_t I, std::size_t N, typename U>
-        U&& get(U(&&a)[N]) { return static_cast<U&&>(a[I]); }
-
-        template<typename ...Args>
-        struct is_one : public std::false_type { using type = void; };
-
-        template<typename Arg>
-        struct is_one<Arg> : public std::true_type { using type = Arg; };
-
-        T v;
         const std::type_info& type() const noexcept final { return typeid(T); }
 
-        [[noreturn]] void throws() final { throw std::addressof(v); }
+        [[noreturn]] void throws() final { throw std::addressof(this->value()); }
 
         template<typename... Args>
-        explicit holder(std::true_type, Args&&... args) : v(std::forward<Args>(args)...) {}
-
-        template<typename... Args>
-        explicit holder(std::false_type, Args&&... args) : v{std::forward<Args>(args)...} {}
-
-        template<typename A, std::size_t... I>
-        explicit holder(std::index_sequence<I...>, A&& a) : v{get<I>(static_cast<A&&>(a))...} {}
+        explicit holder(Args&&... args) : held<T>(0, std::forward<Args>(args)...) {}
 
     public:
-        T& value() noexcept
-        {
-            return v;
-        }
-
         template<typename... Args>
         static auto create(Args&&... args)
         {
-            using O = is_one<Args...>;
-            using U = rmcvr<typename O::type>;
-            if constexpr (std::is_array_v<T> && O::value && std::is_same_v<T, U>)
-            {
-                return new holder(std::make_index_sequence<std::extent_v<U>>{}, std::forward<Args>(args)...);
-            }
-            else
-            {
-                return new holder(std::is_constructible<T, Args&&...>{}, std::forward<Args>(args)...);
-            }
+            return new holder(std::forward<Args>(args)...);
         }
     };
 
@@ -129,9 +145,61 @@ class object
         }
     };
 
+    template<typename R, typename... Args>
+    class holder<R(Args...)> : public placeholder
+    {
+        const std::type_info& type() const noexcept override { return typeid(R(Args...)); }
+
+        template<typename F>
+        class fn : public held<F>
+        {
+        public:
+            std::remove_pointer_t<F>& value() noexcept
+            {
+                if constexpr (std::is_pointer_v<F>) return *held<F>::value();
+                else return held<F>::value();
+            }
+
+            template<typename... A>
+            explicit fn(std::false_type, A&&... a) : held<F>(0, std::forward<A>(a)...) {}
+
+            template<typename T, typename... A>
+            explicit fn(std::true_type, T&&, A&&... a) : fn(std::false_type{}, std::forward<A>(a)...) {}
+        };
+
+    public:
+        virtual R call(Args... args) = 0;
+
+        template<typename T, typename... A, typename D = std::decay_t<T>,
+                 typename F = typename is_in_place_type<D>::type,
+                 typename = std::enable_if_t<std::is_invocable_r_v<R, F, Args...>>>
+        static auto create(T&& t, A&&... a)
+        {
+            class fn : public holder, public holder::template fn<F>
+            {
+                using base = holder::fn<F>;
+
+                R call(Args... args) override
+                {
+                    return static_cast<R>(base::value()(std::forward<Args>(args)...));
+                }
+
+                [[noreturn]] void throws() override { throw std::addressof(base::value()); }
+
+            public:
+                explicit fn(T&& t, A&&... a) : base(is_in_place_type<D>{}, std::forward<T>(t), std::forward<A>(a)...) {}
+            };
+
+            return new fn(std::forward<T>(t), std::forward<A>(a)...);
+        }
+    };
+
     explicit object(placeholder* p) noexcept : p(p) {}
 
 public:
+    template<typename F>
+    class fn;
+
     object() noexcept : p(nullptr) {}
 
     object(object&& obj) noexcept : p(obj.p)
@@ -210,12 +278,9 @@ public:
     template<typename ValueType, typename U = enable<ValueType>>
     object(ValueType&& value) : p(holder<U>::create(std::forward<ValueType>(value))) {}
 
-    template<typename ValueType, typename U = enable<ValueType>>
-    object& operator=(ValueType&& value)
-    {
-        object(std::forward<ValueType>(value)).swap(*this);
-        return *this;
-    }
+    template<typename ValueType, typename... Args>
+    object(std::in_place_type_t<ValueType>, Args&&... args)
+        : p(holder<rmcvr<ValueType>>::create(std::forward<Args>(args)...)) {}
 
 public:
     template<typename ValueType>
@@ -228,6 +293,83 @@ public:
     friend const ValueType* polymorphic_object_cast(const object* obj) noexcept;
 };
 
+template<typename R, typename... Args>
+class object::fn<R(Args...)> : public object
+{
+    template<typename F>
+    using enable = std::enable_if_t<!std::is_base_of_v<fn, F> &&
+                                    std::is_invocable_r_v<R, F, Args...>>;
+public:
+    fn() noexcept = default;
+
+    template<typename T, typename F = typename is_in_place_type<std::decay_t<T>>::type,
+             typename = enable<F>, typename... A>
+    fn(T&& t, A&&... a) : object(std::in_place_type<R(Args...)>, std::forward<T>(t), std::forward<A>(a)...) {}
+
+    template<typename Object, typename = std::enable_if_t<std::is_same_v<Object, object>>>
+    fn(const Object& obj)
+    {
+        if (obj.type() != typeid(R(Args...))) throw object_not_fn{};
+        object::operator=(obj);
+    }
+
+    template<typename T, typename F = std::decay_t<T>,
+            typename = std::enable_if_t<!is_in_place_type<F>::value>,
+            typename = enable<F>, typename... A>
+    decltype(auto) emplace(A&&... a)
+    {
+        return object::emplace<R(Args...)>(std::in_place_type<F>, std::forward<A>(a)...);
+    }
+
+    R operator()(Args... args) const
+    {
+        return static_cast<holder<R(Args...)>*>(p)->call(std::forward<Args>(args)...);
+    }
+};
+
+template<typename R, typename... Args>
+class object::fn<R(&)(Args...)>         // std::function_ref
+{
+    void* o;
+    R (*f)(void*, Args...);
+
+    static R callobj(void* o, Args... args)
+    {
+        return static_cast<R>((*static_cast<fn<R(Args...)>*>(o))(
+                std::forward<Args>(args)...));
+    }
+
+public:
+    fn(const fn<R(Args...)>& f) noexcept : o((void*)std::addressof(f)), f(&callobj) {}
+
+    template<typename F, typename = std::enable_if_t<!std::is_base_of_v<fn<R(Args...)>, rmcvr<F>> &&
+                                                     !std::is_base_of_v<fn<R(&)(Args...)>, rmcvr<F>> &&
+                                                     std::is_invocable_r_v<R, F, Args...>>>
+    fn(F&& f) noexcept : o((void*)std::addressof(f))
+    {
+        this->f = [](void* o, Args... args) -> R
+        {
+            return static_cast<R>((*(std::add_pointer_t<F>)(o))(
+                    std::forward<Args>(args)...));
+        };
+    }
+
+    template<typename Object, typename = std::enable_if_t<std::is_same_v<Object, object>>>
+    fn(const Object& obj) : o((void*)std::addressof(obj)), f(&callobj)
+    {
+        if (obj.type() != typeid(R(Args...))) throw object_not_fn{};
+    }
+
+    fn<R(Args...)> object() const noexcept
+    {
+        return f == &callobj ? *static_cast<fn<R(Args...)>*>(o) : fn<R(Args...)>{};
+    }
+
+    R operator()(Args... args) const
+    {
+        return (*f)(o, std::forward<Args>(args)...);
+    }
+};
 
 template<typename ValueType>
 const ValueType* unsafe_object_cast(const object* obj) noexcept
