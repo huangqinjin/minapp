@@ -2,7 +2,7 @@
 #include <minapp/acceptor.hpp>
 #include <minapp/handler.hpp>
 #include <minapp/session.hpp>
-#include <minapp/memory_printer.hpp>
+#include <minapp/hexdump.hpp>
 
 #include <iostream>
 #include <mutex>
@@ -75,7 +75,7 @@ public:
     {
         std::size_t size = buf.size();
         const void* p = buf.data();
-        streambuf_memory_printer{NSLOG(READ) << "bufsize = " << size << '\n'}(p, size);
+        hexdump{NSLOG(READ) << "bufsize = " << size << '\n'}(p, size);
         h->read(session, buf);
     }
 
@@ -85,7 +85,7 @@ public:
         {
             std::size_t size = buf.size();
             const void* p = buf.data();
-            streambuf_memory_printer{NSLOG(WRITE) << "bufsize = " << size << '\n'}(p, size);
+            hexdump{NSLOG(WRITE) << "bufsize = " << size << '\n'}(p, size);
         }
         h->write(session, list);
     }

@@ -1,7 +1,9 @@
-#ifndef MINAPP_MEMORY_PRINTER_HPP
-#define MINAPP_MEMORY_PRINTER_HPP
+#ifndef MINAPP_HEXDUMP_HPP
+#define MINAPP_HEXDUMP_HPP
 
-#include <ostream>
+#include <ostream>      // basic_ostream, basic_streambuf
+#include <cstdio>       // fputc, FILE
+#include <cwchar>       // fputwc
 
 #ifdef _MSC_VER
 #  define MINAPP_DEFAULT_MEMBER_INITIALIZER_FOR_NESTED_CLASS(C)
@@ -14,31 +16,42 @@
 
 namespace minapp
 {
-    class memory_printer
+    class hexdump
     {
     public:
         struct options
         {
             MINAPP_DEFAULT_MEMBER_INITIALIZER_FOR_NESTED_CLASS(options)
-            unsigned bytes_per_line = 16;
             bool uppercase = false;
+            char min_printable = 0x21;
+            char max_printable = 0x7f;
+            char placeholder = '.';
+            unsigned bytes_per_line = 16;
         };
 
-        virtual void putc(char c) = 0;
+        using putf = void(char c, void* buf);
 
-        virtual char printable(char c)
-        {
-            const auto sc = static_cast<signed char>(c);
-            return sc > 0x20 ? c : '.';
-        }
+        hexdump(putf* put, void* buf) : put(put), buf(buf) {}
+
+        // For wide output, file should be in wide-oriented mode set via fwide(file, 1)
+        // or _setmode(_fileno(file), _O_U8TEXT /* or _O_U16TEXT */) on Windows.
+        explicit hexdump(std::FILE* file, bool wide = false)
+            : hexdump(wide ? (putf*)&std::fputwc : (putf*)&std::fputc, file) {}
+
+        template<typename CharT>
+        explicit hexdump(std::basic_streambuf<CharT>* buf)
+            : hexdump([](char c, void* buf) {
+                static_cast<std::basic_streambuf<CharT>*>(buf)->sputc(c);
+            }, buf) {}
+
+        template<typename CharT>
+        explicit hexdump(std::basic_ostream<CharT>& os)
+            : hexdump(os.rdbuf()) {}
 
         void operator()(const void* memory, std::size_t size, const options& o = {})
         {
-            print(memory, size, o);
-        }
-
-        void print(const void* memory, std::size_t size, const options& o = {})
-        {
+            auto putc = [this](char c) { put(c, buf); };
+            auto printable = [&o](char c){ return c >= o.min_printable && c <= o.max_printable ? c : o.placeholder;  };
             const char* table = o.uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
             auto hexer = [table](char c, char& high, char& low)
             {
@@ -57,13 +70,13 @@ namespace minapp
                     hexer(*(p + j), high, low);
                     putc(high); putc(low); putc(' ');
                 }
-                putc('|'); putc(' ');
+                putc('|');
                 for (unsigned j = 0; j < o.bytes_per_line; ++j)
                 {
                     char c = *p++;
                     putc(printable(c));
                 }
-                putc('\n');
+                putc('|'); putc('\n');
             }
 
             size %= o.bytes_per_line;
@@ -80,32 +93,23 @@ namespace minapp
                 {
                     putc(' ');
                 }
-                putc('|'); putc(' ');
+                putc('|');
                 for (unsigned j = 0; j < size; ++j)
                 {
                     char c = *p++;
                     putc(printable(c));
                 }
-                putc('\n');
+                for (unsigned j = 0; j < (o.bytes_per_line - size); ++j)
+                {
+                    putc(' ');
+                }
+                putc('|'); putc('\n');
             }
         }
-    };
 
-    class streambuf_memory_printer : public memory_printer
-    {
-        std::streambuf* buf;
-
-    public:
-        explicit streambuf_memory_printer(std::streambuf* buf)
-            : buf(buf) {}
-
-        explicit streambuf_memory_printer(std::ostream& os)
-            : streambuf_memory_printer(os.rdbuf()) {}
-
-        void putc(char c) override
-        {
-            buf->sputc(c);
-        }
+    private:
+        putf* const put;
+        void* const buf;
     };
 }
 #endif
