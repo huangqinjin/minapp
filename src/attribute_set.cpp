@@ -222,12 +222,14 @@ void attribute_set::compute(key_t key, object::fn<void(&)(value_t&)> f)
 std::size_t attribute_set::foreach(object::fn<bool(&)(key_t, value_t)> f) const
 {
     std::size_t c = 0;
-    guard.lock();
+    std::string key(15, '\0');
+    std::unique_lock<spinlock> guard(this->guard);
     auto iter = map(attrs).begin();
     while (iter != map(attrs).end())
     {
         auto& p = *iter;
-        key_t key = name{}(p);
+        key_t key1 = name{}(p);
+        key.assign(key1);
         value_t value = p.value;
 
         guard.unlock();
@@ -237,25 +239,26 @@ std::size_t attribute_set::foreach(object::fn<bool(&)(key_t, value_t)> f) const
         guard.lock();
         iter = map(attrs).upper_bound(key);
     }
-    guard.unlock();
     return c;
 }
 
 std::size_t attribute_set::foreach(key_t prefix, object::fn<bool(&)(key_t, value_t)> f) const
 {
     std::size_t c = 0;
-    guard.lock();
+    std::string key(15, '\0');
+    std::unique_lock<spinlock> guard(this->guard);
     auto iter = map(attrs).lower_bound(prefix);
     while (iter != map(attrs).end())
     {
         auto& p = *iter;
-        key_t key = name{}(p);
+        key_t key1 = name{}(p);
 
         // C++20
         // if (!key.starts_with(prefix))
-        if (key.substr(0, prefix.size()) != prefix)
+        if (key1.substr(0, prefix.size()) != prefix)
             break;
 
+        key.assign(key1);
         value_t value = p.value;
 
         guard.unlock();
@@ -265,7 +268,6 @@ std::size_t attribute_set::foreach(key_t prefix, object::fn<bool(&)(key_t, value
         guard.lock();
         iter = map(attrs).upper_bound(key);
     }
-    guard.unlock();
     return c;
 }
 
@@ -273,16 +275,18 @@ std::size_t attribute_set::foreach(key_t (min), key_t (max), bool include_min, b
                                    object::fn<bool(&)(key_t, value_t)> f) const
 {
     std::size_t c = 0;
-    guard.lock();
+    std::string key(15, '\0');
+    std::unique_lock<spinlock> guard(this->guard);
     auto iter = include_min ? map(attrs).lower_bound((min)) : map(attrs).upper_bound((min));
     while (iter != map(attrs).end())
     {
         auto& p = *iter;
-        key_t key = name{}(p);
+        key_t key1 = name{}(p);
 
-        if (key.compare((max)) >= include_max)
+        if (key1.compare((max)) >= include_max)
             break;
 
+        key.assign(key1);
         value_t value = p.value;
 
         guard.unlock();
@@ -292,6 +296,5 @@ std::size_t attribute_set::foreach(key_t (min), key_t (max), bool include_min, b
         guard.lock();
         iter = map(attrs).upper_bound(key);
     }
-    guard.unlock();
     return c;
 }
