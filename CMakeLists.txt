@@ -16,7 +16,6 @@ set(SOURCE_FILES
         src/handler.cpp
         src/session.cpp
         src/service.cpp
-        src/session_manager.cpp
         src/attribute_set.cpp
 )
 add_library(${PROJECT_NAME} ${SOURCE_FILES})
