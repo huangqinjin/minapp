@@ -217,7 +217,7 @@ class ServerHandler : public logging_handler::named
 
                 case protocol::delim:
                     session->protocol(p, protocol_options::do_not_consume_buffer);
-                    session->delimiter(std::string(h.options.data(), sizeof(h.options)));
+                    session->delimiter(std::string((const char*)h.options.data(), sizeof(h.options)));
                     boost::endian::native_to_big_inplace(options);
                     break;
 
