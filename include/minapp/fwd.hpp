@@ -2,7 +2,7 @@
 #define MINAPP_FWD_HPP
 
 #include <memory>
-#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/generic/stream_protocol.hpp>
 #include <boost/asio/io_context.hpp>
 
 #define MINAPP_EXPORT BOOST_SYMBOL_EXPORT
@@ -46,8 +46,8 @@ namespace minapp
     class acceptor;
     class attribute_set;
 
-    using endpoint = boost::asio::ip::tcp::endpoint;
-    using socket = boost::asio::ip::tcp::socket;
+    using endpoint = boost::asio::generic::stream_protocol::endpoint;
+    using socket = boost::asio::generic::stream_protocol::socket;
     using context = boost::asio::io_context;
 
     using session_ptr = std::shared_ptr<session>;

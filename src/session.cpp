@@ -287,7 +287,7 @@ void session::close()
     if (this->status_ >= status::closing) return;
     this->status_ = status::closing;
     boost::system::error_code ignored;
-    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
+    socket_.shutdown(socket::shutdown_both, ignored);
     socket_.close(ignored);
     this->status_ = status::closed;
     handler()->close(this);

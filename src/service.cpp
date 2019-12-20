@@ -5,6 +5,8 @@
 #include <minapp/connector.hpp>
 #include <minapp/acceptor.hpp>
 
+#include <boost/asio/basic_socket_acceptor.hpp>
+
 using namespace minapp;
 
 
@@ -147,7 +149,7 @@ namespace
     class acceptor_impl : public acceptor
     {
     public:
-        boost::asio::ip::tcp::acceptor acceptor_;
+        boost::asio::basic_socket_acceptor<boost::asio::generic::stream_protocol> acceptor_;
         boost::asio::executor_work_guard<context::executor_type> guard_;
 
         acceptor_impl(handler_ptr handler, context_ptr ctx)
@@ -175,7 +177,15 @@ void acceptor::bind(const endpoint& ep)
 {
     auto& acceptor_ = static_cast<acceptor_impl*>(this)->acceptor_;
     acceptor_.open(ep.protocol());
-    acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+    switch (ep.protocol().family())
+    {
+    case BOOST_ASIO_OS_DEF(AF_INET):
+    case BOOST_ASIO_OS_DEF(AF_INET6):
+        acceptor_.set_option(socket::reuse_address(true));
+        break;
+    default:
+        break;
+    }
     acceptor_.bind(ep);
     acceptor_.listen();
     accept();
