@@ -10,6 +10,7 @@
 #include <chrono>
 #include <vector>
 
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/exception/diagnostic_information.hpp>
 #include <boost/endian/conversion.hpp>
 #include <boost/endian/buffers.hpp>
@@ -67,7 +68,16 @@ public:
 
     void connect_impl(session* session, const endpoint& ep) override
     {
-        NSLOG(CONN) << "connect to " << ep;
+        switch (ep.protocol().family())
+        {
+        case BOOST_ASIO_OS_DEF(AF_INET):
+        case BOOST_ASIO_OS_DEF(AF_INET6):
+            NSLOG(CONN) << "connect to " << reinterpret_cast<boost::asio::ip::tcp::endpoint const&>(ep);
+            break;
+        default:
+            NSLOG(CONN) << "connect to unknown protocol endpoint";
+            break;
+        }
         h->connect(session, ep);
     }
 
@@ -297,15 +307,17 @@ class ClientHandler : public logging_handler::named
 };
 
 
-int main()
+int main(int argc, char* argv[]) try
 {
     auto server = minapp::acceptor::create(logging_handler::wrap<ServerHandler>());
     auto client = minapp::connector::create(logging_handler::wrap<ClientHandler>());
 
-    server->bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 2333));
+    boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v4(), 2333);
+    server->bind(ep);
 
     std::thread([client] {
-        auto future = client->connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 2333));
+        boost::asio::ip::tcp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), 2333);
+        auto future = client->connect(ep);
         auto session = future.get();
 
         boost::crc_32_type crc32;
@@ -437,4 +449,17 @@ int main()
         th.join();
 
     return 0;
+}
+catch (boost::system::system_error& e)
+{
+    std::cerr << e.code() << ' ' << '-' << ' ' << e.what() << std::endl;
+}
+catch (std::exception& e)
+{
+    std::cerr << e.what() << std::endl;
+}
+catch (...)
+{
+    std::cerr << "unknown exception" << std::endl;
+    throw;
 }
