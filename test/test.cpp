@@ -24,6 +24,7 @@ struct ostream_guard
     std::ostream& stream() { return std::cout; }
 };
 
+#undef ERROR
 #define LOG(TAG) ostream_guard{}.stream() << __FILE__ << ':' << __LINE__ << " [" << #TAG << "] - "
 #define NSLOG(TAG) LOG(TAG) << '[' << name() << ':' << session->id() << "] "
 
@@ -147,22 +148,22 @@ struct header
 
     boost::endian::little_uint32_buf_t crc;
 
-    static persistent_buffer make(std::size_t len, int type, std::uint32_t crc)
+    static header make(std::size_t len, int type, std::uint32_t crc)
     {
         header h;
-        h.len = len + sizeof(h) - sizeof(h.len);
+        h.len = static_cast<unsigned>(len + sizeof(h) - sizeof(h.len));
         h.type = type;
         h.crc = crc;
-        return persist(h);
+        return h;
     }
 
-    static persistent_buffer make(enum protocol p, enum protocol_options o, std::uint32_t crc)
+    static header make(enum protocol p, enum protocol_options o, std::uint32_t crc)
     {
         header h;
         h.protocol = static_cast<int>(p);
         h.options = static_cast<unsigned>(o);
         h.crc = crc;
-        return persist(h);
+        return h;
     }
 
     static const header& parse(boost::asio::const_buffer buf)
@@ -252,7 +253,7 @@ class ServerHandler : public logging_handler::named
                     throw std::logic_error(os.str());
                 }
 
-                auto body = persist(buf.whole());
+                auto body = buf.whole();
                 crc32.reset();
                 crc32.process_bytes(body.data(), body.size());
 
@@ -327,7 +328,7 @@ int main(int argc, char* argv[]) try
             case protocol::delim_crlf: {
                 using namespace std::string_view_literals;
                 auto msg = persist("greet from client!\r\n"sv);  // std::string_view
-                assert(msg.storage().type() == typeid(void));
+                assert(msg.storage().type() == object::type_id<void>());
                 session->write(msg);
                 p = protocol::fixed;
                 break;
@@ -335,7 +336,7 @@ int main(int argc, char* argv[]) try
 
             case protocol::fixed: {
                 auto body = persist(std::vector<char>{'f','i','x','e','d'});  // std::vector
-                assert(body.storage().type() == typeid(std::vector<char>));
+                assert(body.storage().type() == object::type_id<std::vector<char>>());
                 crc32.process_bytes(body.data(), body.size());
                 auto header = header::make(p, protocol_options{5}, crc32.checksum());
                 session->write(header, body);
@@ -344,13 +345,13 @@ int main(int argc, char* argv[]) try
             }
 
             case protocol::delim: {
-                static std::array<const char16_t, 6> buf{u"delim"};
-                auto msg = persist(buf);  // std::array<const char16_t, 6>  (read-only container)
-                assert(msg.storage().type() == typeid(void));
+                static std::array<const char32_t, 6> buf{U"delim"};
+                auto msg = persist(buf);  // std::array<const char32_t, 6>  (read-only container)
+                assert(msg.storage().type() == object::type_id<void>());
                 std::uint32_t num = 0x12345678;
                 boost::endian::native_to_big_inplace(num);
                 auto delim = persist(num);                    // POD
-                assert(delim.storage().type() == typeid(std::uint32_t));
+                assert(delim.storage().type() == object::type_id<std::uint32_t>());
                 crc32.process_bytes(msg.data(), msg.size());
                 crc32.process_bytes(delim.data(), delim.size());
                 auto header = header::make(p, protocol_options{num}, crc32.checksum());
@@ -361,7 +362,7 @@ int main(int argc, char* argv[]) try
 
             case protocol::delim_zero: {
                 auto body = persist("delim_zero");  // char[11]
-                assert(body.storage().type() == typeid(char[11]));
+                assert(body.storage().type() == object::type_id<char[11]>());
                 crc32.process_bytes(body.data(), body.size() - 1);
                 auto header = header::make(p, protocol_options::ignore_protocol_bytes, crc32.checksum());
                 session->write(header, body);
@@ -372,7 +373,7 @@ int main(int argc, char* argv[]) try
             case protocol::prefix_8: {
                 const char* s = "\x19prefix_8 include prefix";
                 auto body = persist(boost::asio::buffer(s, s[0]));  // const_buffer
-                assert(body.storage().type() == typeid(void));
+                assert(body.storage().type() == object::type_id<void>());
                 crc32.process_bytes(body.data(), body.size());
                 auto header = header::make(p, protocol_options::include_prefix_in_payload, crc32.checksum());
                 session->write(header, body);
@@ -381,9 +382,9 @@ int main(int argc, char* argv[]) try
             }
 
             case protocol::prefix_16: {
-                const char buf[] = "\x00\x09prefix_16";
-                auto body = persist(&buf[0], std::size(buf) - 1);  // (const char*, n)
-                assert(body.storage().type() == typeid(std::byte[]));
+                const char16_t buf[] = u"\u1200prefix_16";
+                auto body = persist(&buf[0], std::size(buf) - 1);  // (const char16_t*, n)
+                assert(body.storage().type() == object::type_id<char16_t[]>());
                 crc32.process_bytes(body.data(), body.size());
                 auto header = header::make(p, {}, crc32.checksum());
                 session->write(header, body);
@@ -394,12 +395,13 @@ int main(int argc, char* argv[]) try
             case protocol::prefix_64: {
                 char s[] = "prefix_64 little endian";
                 auto msg = persist(boost::asio::buffer(s));  // mutable_buffer
-                assert(msg.storage().type() == typeid(std::byte[]));
+                assert(msg.storage().type() == object::type_id<std::byte[]>());
                 auto prefix = persist(std::array<char, 8>{sizeof(s)});  // std::array<char, 8>
-                assert(prefix.storage().type() == typeid(std::array<char, 8>));
+                assert(prefix.storage().type() == (object::type_id<std::array<char, 8>>()));
                 auto list = make_list(prefix, msg);
                 for(auto&& buf : list) crc32.process_bytes(buf.data(), buf.size());
-                auto header = header::make(p, protocol_options::use_little_endian, crc32.checksum());
+                auto header = persist(header::make(p, protocol_options::use_little_endian, crc32.checksum()));  // POD
+                assert(header.storage().type() == object::type_id<struct header>());                
                 list.push_front(header);
                 session->write(list);
                 p = protocol::prefix_var;
@@ -410,8 +412,9 @@ int main(int argc, char* argv[]) try
                 std::string s = "\x82\x01prefix_var little endian ";
                 s.resize(130 + 2, 'x');
                 s.back() = 'o';
-                auto body = persist(boost::asio::buffer(s));  // mutable_buffer
-                assert(body.storage().type() == typeid(std::byte[]));
+                auto body = persist(std::move(s));  // std::string
+                assert(body.storage().type() == object::type_id<std::string>());
+                assert(s.empty());
                 crc32.process_bytes(body.data(), body.size());
                 auto header = header::make(p, protocol_options::use_little_endian, crc32.checksum());
                 session->write(header, body);
@@ -423,8 +426,8 @@ int main(int argc, char* argv[]) try
                 std::string s = "\x81\x02prefix_var ";
                 s.resize(130 + 2, 'z');
                 s.back() = 'o';
-                auto body = persist(std::move(s));  // std::string
-                assert(body.storage().type() == typeid(std::string));
+                auto body = persist<std::string>(object(std::move(s)));  // object
+                assert(body.storage().type() == object::type_id<std::string>());
                 assert(s.empty());
                 crc32.process_bytes(body.data(), body.size());
                 auto header = header::make(protocol::prefix_var, {}, crc32.checksum());
