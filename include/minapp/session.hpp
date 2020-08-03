@@ -71,7 +71,7 @@ namespace minapp
         template<typename ...Buffers>
         void write(Buffers&&... buffers)
         {
-            write_queue_.manage(std::forward<Buffers>(buffers)...);
+            write_queue_.manage(persist(std::forward<Buffers>(buffers))...);
             write();
         }
 
