@@ -55,6 +55,8 @@ namespace minapp
 
 
     /**
+     *  @p object: using this object as the underlying storage and typename A specifies the actual type.
+     * 
      *  @p persistent_buffer: copy persistent_buffer and @p n is the maximum of buffer size in bytes.
      *
      *  @p pointer: buffer is exactly an @b array_with_length_n and data are copied into storage.
@@ -73,15 +75,23 @@ namespace minapp
      *
      *  @p POD: buffer is the POD itself with no more than @p n bytes. POD is copied into storage.
      */
-    template<typename C>
+    template<typename A = object, typename C>
     persistent_buffer persist(C&& c, std::size_t n = -1)
     {
         using NR = std::remove_reference_t<C>;
         using NC = std::remove_cv_t<NR>;
 
+        static_assert(!std::is_reference_v<A> && !std::is_same_v<NC, std::remove_cv_t<A>>,
+                      "Actual type is required as the first template parameter to persist an object.");
+
         persistent_buffer buf;
 
-        if constexpr (std::is_convertible_v<C&&, persistent_buffer>)
+        if constexpr (std::is_same_v<NC, object>)
+        {
+            buf.buffer() = boost::asio::buffer(object_cast<A>(c), n);
+            buf.storage() = std::forward<C>(c);
+        }
+        else if constexpr (std::is_convertible_v<C&&, persistent_buffer>)
         {
             buf = static_cast<persistent_buffer>(std::forward<C>(c));
             buf.buffer() = boost::asio::buffer(buf.buffer(), n);
@@ -89,11 +99,10 @@ namespace minapp
         else if constexpr (std::is_pointer_v<NR>)
         {
             using NP = std::remove_pointer_t<NR>;
-            if constexpr (!std::is_void_v<NP>) n *= sizeof(NP);
-
-            auto p = buf.storage().emplace<std::byte[]>(n);
-            std::memcpy(p, c, n);
-            buf.buffer() = boost::asio::buffer(p, n);
+            using T = std::conditional_t<std::is_void_v<NP>, std::byte, std::remove_cv_t<NP>>;
+            auto p = buf.storage().emplace<T[]>(n);
+            std::memcpy(p, c, n * sizeof(T));
+            buf.buffer() = boost::asio::buffer(p, n * sizeof(T));
         }
         else if constexpr (std::is_convertible_v<C&&, boost::asio::mutable_buffer>)
         {
