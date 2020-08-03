@@ -3,7 +3,6 @@
 
 #include <type_traits>
 #include <atomic>
-#include <typeinfo>
 #include <utility>        // move, exchange, in_place_type_t
 #include <memory>         // uninitialized_value_construct_n, destroy_n
 #include <new>            // operator new, operator delete, align_val_t, bad_array_new_length
@@ -13,6 +12,23 @@ class object_not_fn : public bad_object_cast {};
 
 class object
 {
+    template<typename T>
+    static void t() noexcept {}
+
+public:
+    using type_index = void (*)() noexcept;
+
+    template<typename T>
+    [[nodiscard]] static type_index type_id() noexcept
+    {
+        return &t<std::remove_cv_t<T>>;
+    }
+
+    [[nodiscard]] static type_index null_t() noexcept
+    {
+        return type_id<void>();
+    }
+
 protected:
     template<typename ...Args>
     struct is_args_one : std::false_type { using type = void; };
@@ -75,14 +91,14 @@ protected:
         long addref(long c = 1) noexcept { return c + refcount.fetch_add(c, std::memory_order_relaxed); }
         long release(long c = 1) noexcept { return addref(-c); }
         virtual ~placeholder() = default;
-        virtual const std::type_info& type() const noexcept = 0;
+        [[nodiscard]] virtual type_index type() const noexcept = 0;
         [[noreturn]] virtual void throws() { throw nullptr; }
     } *p;
 
     template<typename T>
     class holder : public placeholder, public held<T>
     {
-        const std::type_info& type() const noexcept final { return typeid(T); }
+        [[nodiscard]] type_index type() const noexcept final { return type_id<T>(); }
 
         [[noreturn]] void throws() final { throw std::addressof(this->value()); }
 
@@ -91,7 +107,7 @@ protected:
 
     public:
         template<typename... Args>
-        static auto create(Args&&... args)
+        [[nodiscard]] static auto create(Args&&... args)
         {
             return new holder(std::forward<Args>(args)...);
         }
@@ -103,7 +119,7 @@ protected:
         const std::ptrdiff_t n;
         T v[1];
 
-        const std::type_info& type() const noexcept final { return typeid(T[]); }
+        [[nodiscard]] type_index type() const noexcept final { return type_id<T[]>(); }
 
         explicit holder(std::ptrdiff_t n) : n(n), v{}
         {
@@ -138,7 +154,7 @@ protected:
             return reinterpret_cast<T(&)[]>(v);
         }
 
-        static auto create(std::ptrdiff_t n)
+        [[nodiscard]] static auto create(std::ptrdiff_t n)
         {
             if(n < 1) throw std::bad_array_new_length();
             return new(n) holder(n);
@@ -148,7 +164,7 @@ protected:
     template<typename R, typename... Args>
     class holder<R(Args...)> : public placeholder
     {
-        const std::type_info& type() const noexcept override { return typeid(R(Args...)); }
+        [[nodiscard]] type_index type() const noexcept override { return type_id<R(Args...)>(); }
 
         template<typename F>
         class fn : public held<F>
@@ -173,7 +189,7 @@ protected:
         template<typename T, typename... A, typename D = std::decay_t<T>,
                  typename F = typename is_in_place_type<D>::type,
                  typename = std::enable_if_t<std::is_invocable_r_v<R, F, Args...>>>
-        static auto create(T&& t, A&&... a)
+        [[nodiscard]] static auto create(T&& t, A&&... a)
         {
             class fn : public holder, public holder::template fn<F>
             {
@@ -194,11 +210,16 @@ protected:
         }
     };
 
-    explicit object(placeholder* p) noexcept : p(p) {}
-
 public:
     template<typename F>
     class fn;
+
+    template<typename T>
+    class ptr;
+
+    using handle = placeholder*;
+
+    explicit object(handle p) noexcept : p(p) {}
 
     object() noexcept : p(nullptr) {}
 
@@ -254,9 +275,14 @@ public:
         return p != nullptr;
     }
 
-    const std::type_info& type() const noexcept
+    [[nodiscard]] type_index type() const noexcept
     {
-        return p ? p->type() : typeid(void);
+        return p ? p->type() : null_t();
+    }
+
+    [[nodiscard]] handle release() noexcept
+    {
+        return std::exchange(p, nullptr);
     }
 
     bool operator==(const object& obj) const noexcept { return p == obj.p; }
@@ -284,14 +310,53 @@ public:
 
 public:
     template<typename ValueType>
-    friend const ValueType* unsafe_object_cast(const object* obj) noexcept;
+    friend ValueType* unsafe_object_cast(object* obj) noexcept;
 
     template<typename ValueType>
-    friend const ValueType* object_cast(const object* obj) noexcept;
+    friend ValueType* object_cast(object* obj) noexcept;
 
     template<typename ValueType>
-    friend const ValueType* polymorphic_object_cast(const object* obj) noexcept;
+    friend ValueType* polymorphic_object_cast(object* obj) noexcept;
 };
+
+template<typename ValueType>
+ValueType* unsafe_object_cast(object* obj) noexcept
+{
+    return std::addressof(static_cast<object::holder<object::rmcvr<ValueType>>*>(obj->p)->value());
+}
+
+template<typename ValueType>
+ValueType* object_cast(object* obj) noexcept
+{
+    if(obj && obj->p && obj->p->type() == object::type_id<object::rmcvr<ValueType>>())
+        return unsafe_object_cast<ValueType>(obj);
+    return nullptr;
+}
+
+template<typename ValueType>
+ValueType* polymorphic_object_cast(object* obj) noexcept
+{
+    try { if (obj && obj->p) obj->p->throws(); }
+    catch (ValueType* p) { return p; }
+    catch (...) {}
+    return nullptr;
+}
+
+
+#define CAST(cast) \
+template<typename ValueType> std::add_const_t<ValueType>* cast(const object* obj) noexcept \
+{ return cast<ValueType>(const_cast<object*>(obj)); } \
+template<typename ValueType> ValueType& cast(object& obj) \
+{ if(auto p = cast<ValueType>(std::addressof(obj))) return *p; throw bad_object_cast{}; } \
+template<typename ValueType> std::add_const_t<ValueType>& cast(const object& obj) \
+{ if(auto p = cast<ValueType>(std::addressof(obj))) return *p; throw bad_object_cast{}; } \
+
+
+CAST(unsafe_object_cast)
+CAST(object_cast)
+CAST(polymorphic_object_cast)
+#undef CAST
+
 
 template<typename R, typename... Args>
 class object::fn<R(Args...)> : public object
@@ -309,7 +374,7 @@ public:
     template<typename Object, typename = std::enable_if_t<std::is_same_v<Object, object>>>
     fn(const Object& obj)
     {
-        if (obj.type() != typeid(R(Args...))) throw object_not_fn{};
+        if (obj.type() != object::type_id<R(Args...)>()) throw object_not_fn{};
         object::operator=(obj);
     }
 
@@ -357,7 +422,7 @@ public:
     template<typename Object, typename = std::enable_if_t<std::is_same_v<Object, object>>>
     fn(const Object& obj) : o((void*)std::addressof(obj)), f(&callobj)
     {
-        if (obj.type() != typeid(R(Args...))) throw object_not_fn{};
+        if (obj.type() != object::type_id<R(Args...)>()) throw object_not_fn{};
     }
 
     fn<R(Args...)> object() const noexcept
@@ -371,43 +436,42 @@ public:
     }
 };
 
-template<typename ValueType>
-const ValueType* unsafe_object_cast(const object* obj) noexcept
+template<typename T>
+class object::ptr : public object
 {
-    return std::addressof(static_cast<object::holder<object::rmcvr<ValueType>>*>(obj->p)->value());
-}
+public:
+    ptr(const object& obj)
+    {
+        if (obj.type() != object::type_id<T>()) throw bad_object_cast{};
+        object::operator=(obj);
+    }
 
-template<typename ValueType>
-const ValueType* object_cast(const object* obj) noexcept
-{
-    if(obj && obj->p && obj->p->type() == typeid(object::rmcvr<ValueType>))
-        return unsafe_object_cast<ValueType>(obj);
-    return nullptr;
-}
+    ptr(object&& obj)
+    {
+        if (obj.type() != object::type_id<T>()) throw bad_object_cast{};
+            swap(obj);
+    }
 
-template<typename ValueType>
-const ValueType* polymorphic_object_cast(const object* obj) noexcept
-{
-    try { if (obj && obj->p) obj->p->throws(); }
-    catch (const ValueType* p) { return p; }
-    catch (...) {}
-    return nullptr;
-}
+    T* operator->() const noexcept
+    {
+        return unsafe_object_cast<T>(const_cast<object*>(this));
+    }
 
-
-#define CAST(cast) \
-template<typename ValueType> ValueType* cast(object* obj) noexcept \
-{ return (ValueType*)(cast<ValueType>(const_cast<const object*>(obj))); } \
-template<typename ValueType> ValueType& cast(object& obj) \
-{ if(auto p = cast<ValueType>(std::addressof(obj))) return *p; throw bad_object_cast{}; } \
-template<typename ValueType> const ValueType& cast(const object& obj) \
-{ if(auto p = cast<ValueType>(std::addressof(obj))) return *p; throw bad_object_cast{}; } \
+    [[nodiscard]] T& operator*() const noexcept
+    {
+        return *operator->();
+    }
+};
 
 
-CAST(unsafe_object_cast)
-CAST(object_cast)
-CAST(polymorphic_object_cast)
-#undef CAST
+#ifdef cobject_handle_copy
+#undef cobject_handle_copy
+#endif
+#ifdef cobject_handle_clear
+#undef cobject_handle_clear
+#endif
+#define cobject_handle_copy(p) (void*)object((const object&)(p)).release()
+#define cobject_handle_clear(p) (void)object((object::handle)(p))
 
 
 #endif //OBJECT_HPP
