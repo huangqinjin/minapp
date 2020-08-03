@@ -283,7 +283,7 @@ std::size_t attribute_set::foreach(key_t (min), key_t (max), bool include_min, b
         auto& p = *iter;
         key_t key1 = name{}(p);
 
-        if (key1.compare((max)) >= include_max)
+        if (key1.compare((max)) >= (int)include_max)
             break;
 
         key.assign(key1);
