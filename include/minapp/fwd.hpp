@@ -26,6 +26,15 @@ struct sockaddr_un_type { unsigned short sun_family;
 #endif
 
 
+// https://github.com/boostorg/asio/pull/313
+// Bluetooth sockets.
+#if !defined(BOOST_ASIO_HAS_BLUETOOTH_SOCKETS)
+# if !defined(BOOST_ASIO_DISABLE_BLUETOOTH_SOCKETS)
+#  define BOOST_ASIO_HAS_BLUETOOTH_SOCKETS 1
+# endif // !defined(BOOST_ASIO_DISABLE_BLUETOOTH_SOCKETS)
+#endif // !defined(BOOST_ASIO_HAS_BLUETOOTH_SOCKETS)
+
+
 #define MINAPP_EXPORT BOOST_SYMBOL_EXPORT
 #define MINAPP_IMPORT BOOST_SYMBOL_IMPORT
 
