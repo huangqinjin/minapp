@@ -4,9 +4,9 @@
 #include "fwd.hpp"
 #include "object.hpp"
 #include "spinlock.hpp"
-#include <mutex>
 #include <string_view>
-#include <functional>
+#include <utility> // std::pair
+#include <initializer_list>
 
 namespace minapp
 {
@@ -24,6 +24,14 @@ namespace minapp
         ~attribute_set() noexcept;
         attribute_set(attribute_set&& other) noexcept;
         void swap(attribute_set& other) noexcept;
+
+        /**
+         * @brief Create a set the contains all key-value pairs in @p list.
+         * Complexity is in general O(N * log(N)), where N is the length of @p list.
+         * However, it is linear in N if @p list is already sorted in ascending order.
+         * Only the first mapped value will be in set if keys are repeated.
+         */
+        attribute_set(std::initializer_list<std::pair<key_t, value_t>> list);
 
         /**
          * @brief Test if contains the specified key.

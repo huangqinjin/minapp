@@ -1,6 +1,7 @@
 #include <minapp/attribute_set.hpp>
 
 #include <cstring>    // memcpy
+#include <mutex>
 #include <boost/intrusive/set.hpp>
 
 using namespace minapp;
@@ -86,6 +87,20 @@ void attribute_set::swap(attribute_set& other) noexcept
     map(attrs).swap(map(other.attrs));
     guard.unlock();
     other.guard.unlock();
+}
+
+attribute_set::attribute_set(std::initializer_list<std::pair<key_t, value_t>> list) : attribute_set()
+{
+    nvps::insert_commit_data ctx;
+    for (const auto& kv : list)
+    {
+        if (map(attrs).insert_check(map(attrs).cend(), kv.first, ctx).second)
+        {
+            auto& p = nvp::create(kv.first);
+            p.value = kv.second;
+            map(attrs).insert_commit(p, ctx);
+        }
+    }
 }
 
 bool attribute_set::contains(key_t key) const noexcept
