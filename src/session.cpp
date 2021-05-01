@@ -248,6 +248,12 @@ void session::protocol(enum protocol protocol, enum protocol_options options)
     protocol_options_ = options;
 }
 
+void session::protocol(enum protocol protocol, std::size_t bufsz, enum protocol_options options)
+{
+    this->protocol(protocol, options);
+    this->read_buffer_size(bufsz);
+}
+
 enum status session::status() const
 {
     return status_;

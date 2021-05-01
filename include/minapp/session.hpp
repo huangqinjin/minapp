@@ -60,6 +60,7 @@ namespace minapp
         enum protocol protocol() const;
         enum protocol_options protocol_options() const;
         void protocol(enum protocol protocol, enum protocol_options options = {});
+        void protocol(enum protocol protocol, std::size_t bufsz, enum protocol_options options = {});
         enum status status() const;
         minapp::socket& socket();
         const service_ptr& service() const;
