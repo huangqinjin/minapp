@@ -6,26 +6,6 @@
 #include <boost/asio/io_context.hpp>
 
 
-// Windows does not support abstract unix domain sockets yet.
-// https://github.com/microsoft/WSL/issues/4240
-// https://github.com/boostorg/asio/pull/311
-// UNIX domain sockets.
-#if !defined(BOOST_ASIO_HAS_LOCAL_SOCKETS)
-# if !defined(BOOST_ASIO_DISABLE_LOCAL_SOCKETS)
-#  if !defined(BOOST_ASIO_WINDOWS_RUNTIME)
-#   define BOOST_ASIO_HAS_LOCAL_SOCKETS 1
-#  endif // !defined(BOOST_ASIO_WINDOWS_RUNTIME)
-# endif // !defined(BOOST_ASIO_DISABLE_LOCAL_SOCKETS)
-#endif // !defined(BOOST_ASIO_HAS_LOCAL_SOCKETS)
-
-#if defined(BOOST_ASIO_WINDOWS) && !defined(BOOST_ASIO_WINDOWS_RUNTIME) || defined(__CYGWIN__)
-namespace boost::asio::detail {
-struct sockaddr_un_type { unsigned short sun_family;
-  char sun_path[108]; }; /* copy from afunix.h */
-}
-#endif
-
-
 // https://github.com/boostorg/asio/pull/313
 // Bluetooth sockets.
 #if !defined(BOOST_ASIO_HAS_BLUETOOTH_SOCKETS)
