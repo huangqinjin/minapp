@@ -305,6 +305,11 @@ void session::close()
     handler()->close(this);
 }
 
+context& session::execution_context() const
+{
+    return *service_->context();
+}
+
 bool session::check(const boost::system::error_code& ec)
 {
     //if (this->status_ >= status::closing) return false;

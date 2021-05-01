@@ -5,7 +5,7 @@
 #include "persistent_buffer_manager.hpp"
 #include "buffer.hpp"
 #include "protocol.hpp"
-#include "attribute_set.hpp"
+#include "servlets.hpp"
 
 #include <future>
 #include <atomic>
@@ -25,7 +25,8 @@ namespace minapp
 
     class MINAPP_API session
         : public std::enable_shared_from_this<session>,
-          public boost::asio::coroutine
+          public boost::asio::coroutine,
+          public servlets
     {
         friend class service;
         friend class acceptor;
@@ -46,8 +47,6 @@ namespace minapp
         std::string delimiter_;
 
     public:
-        attribute_set attrs;
-
         explicit session(service_ptr service);
         ~session();
 
@@ -89,7 +88,26 @@ namespace minapp
 
         void close();
 
+        template<typename T>
+        object::ptr<T> servlet(attribute_set::key_t instance = {}, servlets::ops op = servlets::ops::ret)
+        {
+            static_assert(std::is_constructible_v<T, context&> || std::is_default_constructible_v<T>);
+            if constexpr(std::is_constructible_v<T, context&>)
+                return servlets::op<T>(op, instance, execution_context());
+            else if constexpr(std::is_default_constructible_v<T>)
+                return servlets::op<T>(op, instance);
+            else // never go here
+                return object();
+        }
+
+        template<typename T>
+        object::ptr<T> servlet(servlets::ops op, attribute_set::key_t instance = {})
+        {
+            return servlet<T>(instance, op);
+        }
+
     private:
+        context& execution_context() const;
         bool check(const boost::system::error_code& ec);
         std::future<session_ptr> connect(const endpoint& ep);
         std::future<session_ptr> connect(object::fn<endpoint()> gen);
