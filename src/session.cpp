@@ -15,7 +15,13 @@
 
 #include <mutex>
 
+#if BOOST_VERSION >= 107400
+#include <boost/stl_interfaces/iterator_interface.hpp>
+#else
+#include <boost/iterator/iterator_facade.hpp>
+#endif
 #include <boost/range/iterator_range_core.hpp>
+#include <boost/asio/connect.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/write.hpp>
@@ -319,29 +325,68 @@ std::future<session_ptr> session::connect(const endpoint& ep)
     [self = shared_from_this(), promise = std::move(promise)]
     (const boost::system::error_code& ec) mutable
     {
-        if (ec)
-        {
-            self->handler()->error(self.get(), ec);
-            boost::system::error_code ignored;
-            self->socket_.shutdown(socket::shutdown_both, ignored);
-            self->socket_.close(ignored);
-            promise.set_exception(std::make_exception_ptr(boost::system::system_error(ec)));
-        }
-        else
-        {
-            self->connect();
-            promise.set_value(std::move(self));
-        }
+        self->connect(ec, &promise);
     });
 
     return future;
 }
 
-void session::connect()
+std::future<session_ptr> session::connect(object::fn<endpoint()> gen)
 {
-    status_ = status::connected;
-    handler()->connect(this, socket_.remote_endpoint());
-    read();
+    // boost::generator_iterator and boost::function_input_iterator do not support sentinel iterators.
+    struct generator_iterator :
+#if BOOST_VERSION >= 107400
+        boost::stl_interfaces::iterator_interface<generator_iterator, std::forward_iterator_tag, const endpoint>
+    {
+        using iterator_interface::operator++;
+        const endpoint& operator*() const { return value; }
+        generator_iterator& operator++() { value = gen(); return *this; }
+        bool operator==(const generator_iterator& other) const { return value == other.value; }
+#else
+        boost::iterators::iterator_facade<generator_iterator, const endpoint, boost::iterators::single_pass_traversal_tag>
+    {
+        const endpoint& dereference() const { return value; }
+        void increment() { value = gen(); }
+        bool equal(const generator_iterator& other) const { return value == other.value; }
+#endif
+        endpoint value;
+        object::fn<endpoint()> gen;
+
+        generator_iterator() : gen(), value() {}
+        explicit generator_iterator(object::fn<endpoint()> gen) : value(gen()), gen(std::move(gen)) { }
+    };
+
+    std::promise<session_ptr> promise;
+    std::future<session_ptr> future = promise.get_future();
+    boost::asio::async_connect(socket_, generator_iterator(std::move(gen)), generator_iterator(),
+    [self = shared_from_this(), promise = std::move(promise)]
+    (const boost::system::error_code& ec, const generator_iterator&) mutable
+    {
+        self->connect(ec, &promise);
+    });
+
+    return future;
+}
+
+bool session::connect(const boost::system::error_code& ec, std::promise<session_ptr>* promise)
+{
+    if (ec)
+    {
+        handler()->error(this, ec);
+        boost::system::error_code ignored;
+        socket_.shutdown(socket::shutdown_both, ignored);
+        socket_.close(ignored);
+        if (promise) promise->set_exception(std::make_exception_ptr(boost::system::system_error(ec)));
+        return false;
+    }
+    else
+    {
+        status_ = status::connected;
+        handler()->connect(this, socket_.remote_endpoint());
+        read();
+        if (promise) promise->set_value(shared_from_this());
+        return true;
+    }
 }
 
 void session::write()

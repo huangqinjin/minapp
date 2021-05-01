@@ -92,7 +92,8 @@ namespace minapp
     private:
         bool check(const boost::system::error_code& ec);
         std::future<session_ptr> connect(const endpoint& ep);
-        void connect();
+        std::future<session_ptr> connect(object::fn<endpoint()> gen);
+        bool connect(const boost::system::error_code& ec, std::promise<session_ptr>* promise);
         void write();
         void read();
         void read_some(std::size_t bufsize);

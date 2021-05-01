@@ -14,44 +14,7 @@ using namespace minapp;
 ///              service
 //////////////////////////////////////////////
 
-service::~service() = default;
-
-const handler_ptr& service::handler()
-{
-    return handler_;
-}
-
-const session_manager_ptr& service::manager()
-{
-    return manager_;
-}
-
-const context_ptr& service::context()
-{
-    return context_;
-}
-
-std::future<session_ptr> service::connect_impl(const endpoint& ep, handler_ptr handler, attribute_set attrs)
-{
-    auto session = manager_->create(shared_from_this());
-    session->attrs.swap(attrs);
-    session->handler_ = std::move(handler);
-    return session->connect(ep);
-}
-
-std::future<session_ptr> service::connect(const endpoint& ep, attribute_set attrs)
-{
-    return connect_impl(ep, handler_, std::move(attrs));
-}
-
-std::future<session_ptr> service::connect(const endpoint& ep, handler_ptr handler, attribute_set attrs)
-{
-    return connect_impl(ep, noexcept_handler::wrap(std::move(handler)), std::move(attrs));
-}
-
-std::future<session_ptr> service::connect(
-        const endpoint& ep,
-        std::function<void(session*, boost::system::error_code)> callback)
+namespace
 {
     class connect_handler : public noexcept_handler_impl
     {
@@ -76,8 +39,68 @@ std::future<session_ptr> service::connect(
             else session->handler()->error(session, std::move(ec));
         }
     };
+}
 
-    return connect_impl(ep, std::make_shared<connect_handler>(std::move(callback)), {});
+service::~service() = default;
+
+const handler_ptr& service::handler()
+{
+    return handler_;
+}
+
+const session_manager_ptr& service::manager()
+{
+    return manager_;
+}
+
+const context_ptr& service::context()
+{
+    return context_;
+}
+
+std::future<session_ptr> service::connect_impl(
+        object::fn<endpoint()> gen, const endpoint& ep,
+        handler_ptr handler, attribute_set attrs)
+{
+    auto session = manager_->create(shared_from_this());
+    session->attrs.swap(attrs);
+    session->handler_ = std::move(handler);
+    if (gen) return session->connect(std::move(gen));
+    else return session->connect(ep);
+}
+
+std::future<session_ptr> service::connect(const endpoint& ep, attribute_set attrs)
+{
+    return connect_impl({}, ep, handler_, std::move(attrs));
+}
+
+std::future<session_ptr> service::connect(const endpoint& ep, handler_ptr handler, attribute_set attrs)
+{
+    return connect_impl({}, ep, noexcept_handler::wrap(std::move(handler)), std::move(attrs));
+}
+
+std::future<session_ptr> service::connect(
+        const endpoint& ep,
+        std::function<void(session*, boost::system::error_code)> callback)
+{
+    return connect_impl({}, ep, std::make_shared<connect_handler>(std::move(callback)), {});
+}
+
+std::future<session_ptr> service::connect(object::fn<endpoint()> gen, attribute_set attrs)
+{
+    return connect_impl(std::move(gen), endpoint(), handler_, std::move(attrs));
+}
+
+std::future<session_ptr> service::connect(object::fn<endpoint()> gen, handler_ptr handler, attribute_set attrs)
+{
+    return connect_impl(std::move(gen), endpoint(), noexcept_handler::wrap(std::move(handler)), std::move(attrs));
+}
+
+std::future<session_ptr> service::connect(
+        object::fn<endpoint()> gen,
+        std::function<void(session*, boost::system::error_code)> callback)
+{
+    return connect_impl(std::move(gen), endpoint(), std::make_shared<connect_handler>(std::move(callback)), {});
 }
 
 
@@ -213,7 +236,7 @@ void acceptor::accept()
             auto session = self->manager_->create(self);
             session->socket_ = std::move(socket);
             session->handler_ = self->handler_;
-            session->connect();
+            session->connect(ec, nullptr);
         }
     });
 }

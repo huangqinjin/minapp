@@ -16,7 +16,9 @@ namespace minapp
         handler_ptr handler_;
         session_manager_ptr manager_;
         context_ptr context_;
-        std::future<session_ptr> connect_impl(const endpoint& ep, handler_ptr handler, attribute_set attrs);
+        std::future<session_ptr> connect_impl(
+                object::fn<endpoint()> gen, const endpoint& ep,
+                handler_ptr handler, attribute_set attrs);
 
     public:
         virtual ~service() = 0;
@@ -26,6 +28,9 @@ namespace minapp
         std::future<session_ptr> connect(const endpoint& ep, attribute_set attrs = {});
         std::future<session_ptr> connect(const endpoint& ep, handler_ptr handler, attribute_set attrs = {});
         std::future<session_ptr> connect(const endpoint& ep, std::function<void(session*, boost::system::error_code)> callback);
+        std::future<session_ptr> connect(object::fn<endpoint()> gen, attribute_set attrs = {});
+        std::future<session_ptr> connect(object::fn<endpoint()> gen, handler_ptr handler, attribute_set attrs = {});
+        std::future<session_ptr> connect(object::fn<endpoint()> gen, std::function<void(session*, boost::system::error_code)> callback);
     };
 }
 #endif
