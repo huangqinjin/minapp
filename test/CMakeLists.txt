@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.9)
-project(EchoTest)
+project(test)
 
 find_package(Threads REQUIRED)
 
-add_executable(${PROJECT_NAME} test.cpp)
-target_link_libraries(${PROJECT_NAME} Threads::Threads minapp::minapp)
+add_executable(echo echo.cpp)
+target_link_libraries(echo Threads::Threads minapp::minapp)

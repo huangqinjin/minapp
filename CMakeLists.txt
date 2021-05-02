@@ -85,7 +85,9 @@ install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
         DESTINATION ${ConfigPackageLocation})
 
-include(CTest)
+
+option(BUILD_TESTING "Build the testing tree." ON)
 if(BUILD_TESTING)
+    enable_testing()
     add_subdirectory(test)
 endif()
