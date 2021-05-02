@@ -452,12 +452,22 @@ public:
             swap(obj);
     }
 
-    T* operator->() const noexcept
+    T* operator->() noexcept
     {
-        return unsafe_object_cast<T>(const_cast<object*>(this));
+        return unsafe_object_cast<T>(this);
     }
 
-    [[nodiscard]] T& operator*() const noexcept
+    const T* operator->() const noexcept
+    {
+        return unsafe_object_cast<T>(this);
+    }
+
+    [[nodiscard]] T& operator*() noexcept
+    {
+        return *operator->();
+    }
+
+    [[nodiscard]] const T& operator*() const noexcept
     {
         return *operator->();
     }
