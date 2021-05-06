@@ -76,17 +76,12 @@ namespace minapp
 
         long mark()
         {
-            std::lock_guard<spinlock> guard(marked_buffers_list_guard);
-            if (marked_buffers_list.empty())
-            {
-                std::lock_guard<spinlock> guard(managed_buffers_list_guard);
-                if (!managed_buffers_list.empty())
-                {
-                    marked_buffers_list.swap(managed_buffers_list);
-                    return marker == std::numeric_limits<long>::max() ? marker = 1 : ++marker;
-                }
-            }
-            return -marker;
+            std::lock_guard<spinlock> guard1(marked_buffers_list_guard);
+            if (!marked_buffers_list.empty()) return -marker;
+            std::lock_guard<spinlock> guard2(managed_buffers_list_guard);
+            if (managed_buffers_list.empty()) return 0;
+            marked_buffers_list.swap(managed_buffers_list);
+            return marker == std::numeric_limits<long>::max() ? marker = 1 : ++marker;
         }
 
         persistent_buffer_list& marked()

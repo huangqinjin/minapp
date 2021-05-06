@@ -14,6 +14,20 @@
 
 namespace minapp
 {
+    ///
+    ///             session::connect[!ec]
+    /// connecting ------------------------------------------> connected: entry/handler::connect
+    ///   |                                                        |
+    ///   | session::connect[ec] / handler::error                  | <---------------------------------------
+    ///   |                                                        |                                        |
+    ///   |                 session::read[ec] / handler::error     V     session::read[!ec] / handler::read |
+    ///   |       closing <------------------------------------ reading -------------------------------------
+    ///   |         |
+    ///   |         | session::write / handler::write
+    ///   V         |
+    /// closed: <----
+    ///   entry/handler::close
+    ///
     enum class status
     {
         connecting,
@@ -66,27 +80,21 @@ namespace minapp
         handler_ptr handler() const;
         handler_ptr handler(handler_ptr other);
         handler_ptr use_service_handler();
-
-
-        template<typename ...Buffers>
-        void write(Buffers&&... buffers)
-        {
-            write_queue_.manage(persist(std::forward<Buffers>(buffers))...);
-            write();
-        }
-
-        void write(persistent_buffer_list& list)
-        {
-            write_queue_.manage(list);
-            write();
-        }
+        void close(bool immediately = false);
+        void write(persistent_buffer_list& list);
 
         void write(persistent_buffer_list&& list)
         {
             write(list);
         }
 
-        void close();
+        template<typename ...Buffers>
+        void write(Buffers&&... buffers)
+        {
+            if (status_ >= status::closing) return;
+            write_queue_.manage(persist(std::forward<Buffers>(buffers))...);
+            write();
+        }
 
         template<typename T>
         object::ptr<T> servlet(attribute_set::key_t instance = {}, servlets::ops op = servlets::ops::ret)

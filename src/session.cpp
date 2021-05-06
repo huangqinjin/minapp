@@ -204,7 +204,7 @@ session::session(service_ptr service)
 
 session::~session()
 {
-    close();
+    close(true);
 }
 
 unsigned long session::id() const
@@ -294,15 +294,29 @@ handler_ptr session::use_service_handler()
     return other;
 }
 
-void session::close()
+void session::close(bool immediately)
 {
-    if (this->status_ >= status::closing) return;
-    this->status_ = status::closing;
-    boost::system::error_code ignored;
-    socket_.shutdown(socket::shutdown_both, ignored);
-    socket_.close(ignored);
-    this->status_ = status::closed;
-    handler()->close(this);
+    auto current = status_.load(std::memory_order_relaxed);
+    const auto target = immediately ? status::closed : status::closing;
+
+    while (current < target && !status_.compare_exchange_weak(
+           current, target, std::memory_order_seq_cst, std::memory_order_relaxed));
+
+    if (current >= target) return;
+
+    if (immediately)
+    {
+        boost::system::error_code ignored;
+        socket_.shutdown(socket::shutdown_both, ignored);
+        socket_.close(ignored);
+        handler()->close(this);
+    }
+    else
+    {
+        boost::system::error_code ignored;
+        socket_.shutdown(socket::shutdown_receive, ignored);
+        write();
+    }
 }
 
 context& session::execution_context() const
@@ -316,7 +330,7 @@ bool session::check(const boost::system::error_code& ec)
     if (ec)
     {
         handler()->error(this, ec);
-        close();
+        close(false);
         return false;
     }
     return true;
@@ -378,9 +392,7 @@ bool session::connect(const boost::system::error_code& ec, std::promise<session_
     if (ec)
     {
         handler()->error(this, ec);
-        boost::system::error_code ignored;
-        socket_.shutdown(socket::shutdown_both, ignored);
-        socket_.close(ignored);
+        close(true);
         if (promise) promise->set_exception(std::make_exception_ptr(boost::system::system_error(ec)));
         return false;
     }
@@ -394,17 +406,32 @@ bool session::connect(const boost::system::error_code& ec, std::promise<session_
     }
 }
 
+void session::write(persistent_buffer_list& list)
+{
+    if (status_ >= status::closing) return;
+    write_queue_.manage(list);
+    write();
+}
+
 void session::write()
 {
-    if (this->status_ >= status::closing) return;
+    if (status_ >= status::closed) return;
     auto marker = write_queue_.mark();
-    if (marker <= 0) return;
-
-    boost::asio::async_write(socket_, boost::make_iterator_range(write_queue_.marked()),
-        [self = shared_from_this(), marker](const boost::system::error_code& ec,
-            std::size_t bytes_transferred)
+    if (marker <= 0)
     {
-        if (self->check(ec))
+        if (marker == 0 && status_ == status::closing)
+            close(true);
+        return;
+    }
+
+    boost::asio::async_write(socket_, boost::make_iterator_range(write_queue_.marked()), CALLBACK()
+    {
+        if (ec)
+        {
+            self->handler()->error(self.get(), ec);
+            self->close(true);
+        }
+        else
         {
             self->handler()->write(self.get(), self->write_queue_.marked());
             self->write_queue_.clear_marked();
@@ -415,8 +442,9 @@ void session::write()
 
 void session::read()
 {
-    if (this->status_ >= status::closing) return;
-    this->status_ = status::reading;
+    auto current = status::connected;
+    if (!status_.compare_exchange_strong(current, status::reading) && current != status::reading)
+        return;
 
     if(!has_options(protocol_options_, protocol_options::do_not_consume_buffer))
         buf_.consume_whole_external_input();
@@ -425,7 +453,8 @@ void session::read()
     switch (protocol_)
     {
     case protocol::none:
-        this->status_ = status::connected;
+        current = status::reading;
+        status_.compare_exchange_strong(current, status::connected);
         break;
 
     case protocol::any:
