@@ -103,13 +103,13 @@ public:
 
     void except_impl(session* session, std::exception& e) override
     {
-        NSLOG(EXCEPT) << '\n' << boost::diagnostic_information(e);
+        NSLOG(EXCEPT) << "status:" << (int)session->status() << '\n' << boost::diagnostic_information(e);
         h->except(session, e);
     }
 
     void error_impl(session* session, boost::system::error_code ec) override
     {
-        NSLOG(ERROR) << ec << ' ' << '-' << ' ' << ec.message();
+        NSLOG(ERROR) << "status:" << (int)session->status() << ' ' << ec << ' ' << '-' << ' ' << ec.message();
         h->error(session, ec);
     }
 
@@ -193,12 +193,12 @@ class ServerHandler : public logging_handler::named
 
     void except(session* session, std::exception& e) override
     {
-        session->close();
+        session->close(true);
     }
 
     void connect(session* session, const endpoint& ep) override
     {
-        session->protocol(protocol::delim_crlf);
+        session->protocol(protocol::delim_crlf, 32);
     }
 
     void read(session* session, buffer& buf) override
@@ -282,7 +282,7 @@ class ClientHandler : public logging_handler::named
 
     void except(session* session, std::exception& e) override
     {
-        session->close();
+        session->close(true);
     }
 
     void read(session* session, buffer& buf) override
@@ -314,7 +314,7 @@ int main(int argc, char* argv[]) try
     server->bind(ep);
 
     std::thread([client] {
-        boost::asio::ip::tcp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), 2333);
+        boost::asio::ip::tcp::endpoint ep(boost::asio::ip::address_v4::loopback(), 2333);
         auto future = client->connect(ep);
         auto session = future.get();
 
@@ -437,7 +437,7 @@ int main(int argc, char* argv[]) try
                 p = protocol::none;
         }
 
-        session->close();
+        session->close(false);
     }).detach();
 
 
