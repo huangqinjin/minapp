@@ -97,7 +97,7 @@ namespace minapp
         }
 
         template<typename T>
-        object::ptr<T> servlet(attribute_set::key_t instance = {}, servlets::ops op = servlets::ops::ret)
+        object::ref<T> servlet(attribute_set::key_t instance = {}, servlets::ops op = servlets::ops::ret)
         {
             static_assert(std::is_constructible_v<T, context&> || std::is_default_constructible_v<T>);
             if constexpr(std::is_constructible_v<T, context&>)
@@ -109,7 +109,7 @@ namespace minapp
         }
 
         template<typename T>
-        object::ptr<T> servlet(servlets::ops op, attribute_set::key_t instance = {})
+        object::ref<T> servlet(servlets::ops op, attribute_set::key_t instance = {})
         {
             return servlet<T>(instance, op);
         }

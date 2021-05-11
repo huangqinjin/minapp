@@ -95,7 +95,7 @@ namespace minapp
         }
 
         template<typename T>
-        object::ptr<T> get(attribute_set::key_t instance = {}) try
+        object::ref<T> get(attribute_set::key_t instance = {}) try
         {
             std::string name = id<T>(instance);
             object srv = attrs.get(name);
@@ -108,7 +108,7 @@ namespace minapp
         }
 
         template<typename T, typename ...Args>
-        object::ptr<T> set(attribute_set::key_t instance = {}, Args&&... args)
+        object::ref<T> set(attribute_set::key_t instance = {}, Args&&... args)
         {
             object srv(std::in_place_type<T>, std::forward<Args>(args)...);
             attrs.set(id<T>(instance), srv);
@@ -116,7 +116,7 @@ namespace minapp
         }
 
         template<typename T, typename ...Args>
-        object::ptr<T> ret(attribute_set::key_t instance = {}, Args&&... args)
+        object::ref<T> ret(attribute_set::key_t instance = {}, Args&&... args)
         {
             std::string name = id<T>(instance);
             object srv;
@@ -135,7 +135,7 @@ namespace minapp
         }
 
         template<typename T, typename ...Args>
-        object::ptr<T> add(attribute_set::key_t instance = {}, Args&&... args)
+        object::ref<T> add(attribute_set::key_t instance = {}, Args&&... args)
         {
             std::string name = id<T>(instance);
             object srv;
@@ -147,7 +147,7 @@ namespace minapp
         }
 
         template<typename T>
-        object::ptr<T> del(attribute_set::key_t instance = {}) try
+        object::ref<T> del(attribute_set::key_t instance = {}) try
         {
             std::string name = id<T>(instance);
             object srv = attrs.remove(name);
@@ -160,7 +160,7 @@ namespace minapp
         }
 
         template<typename T>
-        object remove(attribute_set::key_t instance = {}) noexcept
+        object::ptr<T> remove(attribute_set::key_t instance = {}) noexcept
         {
             return attrs.remove(id<T>(instance));
         }
@@ -168,7 +168,7 @@ namespace minapp
         enum class ops { get, set, ret, add, del, };
 
         template<typename T, typename ...Args>
-        object::ptr<T> op(ops op, attribute_set::key_t instance, Args&&... args)
+        object::ref<T> op(ops op, attribute_set::key_t instance, Args&&... args)
         {
             std::string name = id<T>(instance);
             object srv;
