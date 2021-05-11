@@ -6,6 +6,8 @@
 #include <utility>        // move, exchange, in_place_type_t
 #include <memory>         // uninitialized_value_construct_n, destroy_n
 #include <new>            // operator new, operator delete, align_val_t, bad_array_new_length
+#include <stdexcept>      // out_of_range
+#include <algorithm>      // copy
 
 class bad_object_cast : public std::exception {};
 class object_not_fn : public bad_object_cast {};
@@ -154,6 +156,11 @@ protected:
             return reinterpret_cast<T(&)[]>(v);
         }
 
+        std::ptrdiff_t length() const noexcept
+        {
+            return n;
+        }
+
         [[nodiscard]] static auto create(std::ptrdiff_t n)
         {
             if(n < 1) throw std::bad_array_new_length();
@@ -217,6 +224,12 @@ public:
     template<typename T>
     class ptr;
 
+    template<typename T>
+    class ref;
+
+    template<typename T>
+    class vec;
+
     using handle = placeholder*;
 
     explicit object(handle p) noexcept : p(p) {}
@@ -239,29 +252,15 @@ public:
             delete p;
     }
 
-    object exchange(const object& obj) noexcept
-    {
-        object old(std::exchange(p, obj.p));
-        if(p) p->addref();
-        return old;
-    }
-
-    object exchange(object&& obj) noexcept
-    {
-        object old(std::exchange(p, obj.p));
-        obj.p = nullptr;
-        return old;
-    }
-
     object& operator=(const object& obj) noexcept
     {
-        if(p != obj.p) exchange(obj);
+        if(p != obj.p) object(obj).swap(*this);
         return *this;
     }
 
     object& operator=(object&& obj) noexcept
     {
-        if(p != obj.p) exchange(std::move(obj));
+        if(p != obj.p) object(std::move(obj)).swap(*this);
         return *this;
     }
 
@@ -371,11 +370,16 @@ public:
              typename = enable<F>, typename... A>
     fn(T&& t, A&&... a) : object(std::in_place_type<R(Args...)>, std::forward<T>(t), std::forward<A>(a)...) {}
 
-    template<typename Object, typename = std::enable_if_t<std::is_same_v<Object, object>>>
-    fn(const Object& obj)
+    template<typename Object, typename = std::enable_if_t<std::is_same_v<rmcvr<Object>, object>>>
+    fn(Object&& obj)
     {
-        if (obj.type() != object::type_id<R(Args...)>()) throw object_not_fn{};
-        object::operator=(obj);
+        if (obj && obj.type() != type_id<R(Args...)>()) throw object_not_fn{};
+        object::operator=(std::forward<Object>(obj));
+    }
+
+    void swap(fn& f) noexcept
+    {
+        return object::swap(f);
     }
 
     template<typename T, typename F = std::decay_t<T>,
@@ -388,6 +392,7 @@ public:
 
     R operator()(Args... args) const
     {
+        if (p == nullptr) throw object_not_fn{};
         return static_cast<holder<R(Args...)>*>(p)->call(std::forward<Args>(args)...);
     }
 };
@@ -405,7 +410,10 @@ class object::fn<R(&)(Args...)>         // std::function_ref
     }
 
 public:
-    fn(const fn<R(Args...)>& f) noexcept : o((void*)std::addressof(f)), f(&callobj) {}
+    fn(const fn<R(Args...)>& f) : o((void*)std::addressof(f)), f(&callobj)
+    {
+        if (!f) throw object_not_fn{};
+    }
 
     template<typename F, typename = std::enable_if_t<!std::is_base_of_v<fn<R(Args...)>, rmcvr<F>> &&
                                                      !std::is_base_of_v<fn<R(&)(Args...)>, rmcvr<F>> &&
@@ -442,14 +450,109 @@ class object::ptr : public object
 public:
     ptr(const object& obj)
     {
-        if (obj.type() != object::type_id<T>()) throw bad_object_cast{};
+        if (obj && obj.type() != type_id<T>()) throw bad_object_cast{};
         object::operator=(obj);
     }
 
     ptr(object&& obj)
     {
-        if (obj.type() != object::type_id<T>()) throw bad_object_cast{};
-            swap(obj);
+        if (obj && obj.type() != type_id<T>()) throw bad_object_cast{};
+        object::swap(obj);
+    }
+
+    void swap(ptr& p) noexcept
+    {
+        return object::swap(p);
+    }
+
+    template<typename... Args>
+    decltype(auto) emplace(Args&&... args)
+    {
+        return object::emplace<T>(std::forward<Args>(args)...);
+    }
+
+    T* operator->()
+    {
+        if (p == nullptr) throw bad_object_cast{};
+        return unsafe_object_cast<T>(this);
+    }
+
+    const T* operator->() const
+    {
+        if (p == nullptr) throw bad_object_cast{};
+        return unsafe_object_cast<T>(this);
+    }
+
+    [[nodiscard]] T& operator*()
+    {
+        return *operator->();
+    }
+
+    [[nodiscard]] const T& operator*() const
+    {
+        return *operator->();
+    }
+};
+
+template<typename T>
+class object::ref : public object
+{
+public:
+    ref(const object& obj)
+    {
+        if (obj.type() != type_id<T>()) throw bad_object_cast{};
+        object::operator=(obj);
+    }
+
+    ref(object&& obj)
+    {
+        if (obj.type() != type_id<T>()) throw bad_object_cast{};
+        object::swap(obj);
+    }
+
+    ref(const ptr<T>& p)
+    {
+        if (!p) throw bad_object_cast{};
+        object::operator=(p);
+    }
+
+    ref(ptr<T>&& p)
+    {
+        if (!p) throw bad_object_cast{};
+        object::swap(p);
+    }
+
+    void swap(ref& r) noexcept
+    {
+        return object::swap(r);
+    }
+
+    [[nodiscard]] handle release() const noexcept
+    {
+        return object(*this).release();
+    }
+
+    template<typename... Args>
+    decltype(auto) emplace(Args&&... args)
+    {
+        return object::emplace<T>(std::forward<Args>(args)...);
+    }
+
+    [[nodiscard]] ptr<T> operator&() const noexcept
+    {
+        ptr<T> p;
+        object(*this).swap(p);
+        return p;
+    }
+
+    operator T&() noexcept
+    {
+        return *unsafe_object_cast<T>(this);
+    }
+
+    operator const T&() const noexcept
+    {
+        return *unsafe_object_cast<T>(this);
     }
 
     T* operator->() noexcept
@@ -462,14 +565,177 @@ public:
         return unsafe_object_cast<T>(this);
     }
 
-    [[nodiscard]] T& operator*() noexcept
+#ifdef OBJECT_HAVE_OPERATOR_DOT // someday we could have this
+    T& operator.() noexcept
     {
-        return *operator->();
+        return *this;
     }
 
-    [[nodiscard]] const T& operator*() const noexcept
+    const T& operator.() const noexcept
     {
-        return *operator->();
+        return *this;
+    }
+#endif
+};
+
+template<typename T>
+class object::vec<T&>         // std::span
+{
+public:
+    using element_type     = T;
+    using value_type       = std::remove_cv_t<T>;
+    using size_type        = std::size_t;
+    using difference_type  = std::ptrdiff_t;
+    using pointer          = element_type*;
+    using const_pointer    = const element_type*;
+    using reference        = element_type&;
+    using const_reference  = const element_type&;
+    using iterator         = pointer;
+//  using reverse_iterator = std::reverse_iterator<iterator>;
+
+    template<typename R>
+    vec(R&& r) noexcept : p(std::data(r)), n(std::size(r)) {}
+
+    vec() noexcept : p(nullptr), n(0) {}
+    vec(pointer p, size_type n) noexcept : p(p), n(n) {}
+    pointer data() const noexcept { return p; }
+    size_type size() const noexcept { return n; }
+    bool empty() const noexcept { return n == 0; }
+    iterator begin() const noexcept { return p; }
+    iterator end() const noexcept { return p + n; }
+    reference front() const noexcept { return p[0]; }
+    reference back() const noexcept { return p[n - 1]; }
+    reference operator[](size_type i) const noexcept { return p[i]; }
+    size_type size_bytes() const noexcept { return n * sizeof(element_type); }
+    vec subspan(size_type offset, size_type count) const noexcept { return {p + offset, count}; }
+    vec first(size_type count) const noexcept { return {p, count}; }
+    vec last(size_type count) const noexcept { return {p + (n - count), count}; }
+
+private:
+    pointer p;
+    size_type n;
+};
+
+template<typename T>
+class object::vec : public object
+{
+public:
+    vec() = default;
+
+    explicit vec(std::size_t n)
+    {
+        if (n != 0) object::emplace<T[]>(n);
+    }
+
+    vec(const object& obj)
+    {
+        if (obj && obj.type() != type_id<T[]>()) throw bad_object_cast{};
+        object::operator=(obj);
+    }
+
+    vec(object&& obj)
+    {
+        if (obj && obj.type() != type_id<T[]>()) throw bad_object_cast{};
+        object::swap(obj);
+    }
+
+    vec(std::initializer_list<T> list)
+    {
+        if (list.size() == 0) return;
+        std::copy(list.begin(), list.end(), object::emplace<T[]>(list.size()));
+    }
+
+    void swap(vec& v) noexcept
+    {
+        return object::swap(v);
+    }
+
+    vec<T&> emplace(std::ptrdiff_t n)
+    {
+        if (n != 0) object::emplace<T[]>(n);
+        else object().swap(*this);
+        return *this;
+    }
+
+    operator vec<T&>() noexcept
+    {
+        if (auto h = static_cast<holder<T[]>*>(p))
+            return { h->value(), static_cast<std::size_t>(h->length()) };
+        return {};
+    }
+
+    operator vec<const T&>() const noexcept
+    {
+        return const_cast<vec*>(this)->operator vec<T&>();
+    }
+
+    T* data() noexcept
+    {
+        if (auto h = static_cast<holder<T[]>*>(p))
+            return h->value();
+        return nullptr;
+    }
+
+    const T* data() const noexcept
+    {
+        return const_cast<vec*>(this)->data();
+    }
+
+    std::size_t size() const noexcept
+    {
+        if (auto h = static_cast<holder<T[]>*>(p))
+            return static_cast<std::size_t>(h->length());
+        return 0;
+    }
+
+    bool empty() const noexcept
+    {
+        return p == nullptr;
+    }
+
+    T& operator[](std::size_t i) noexcept
+    {
+        return static_cast<holder<T[]>*>(p)->value()[i];
+    }
+
+    const T& operator[](std::size_t i) const noexcept
+    {
+        return const_cast<vec*>(this)->operator[](i);
+    }
+
+    T& at(std::size_t i)
+    {
+        if (size() <= i) throw std::out_of_range("object::vec::at()");
+        return static_cast<holder<T[]>*>(p)->value()[i];
+    }
+
+    const T& at(std::size_t i) const
+    {
+        return const_cast<vec*>(this)->at(i);
+    }
+
+    T* begin() noexcept
+    {
+        if (auto h = static_cast<holder<T[]>*>(p))
+            return h->value();
+        return nullptr;
+    }
+
+    T* end() noexcept
+    {
+        if (auto h = static_cast<holder<T[]>*>(p))
+            return h->value() + h->length();
+        return nullptr;
+    }
+
+    const T* begin() const noexcept
+    {
+        return const_cast<vec*>(this)->begin();
+    }
+
+    const T* end() const noexcept
+    {
+        return const_cast<vec*>(this)->end();
     }
 };
 
