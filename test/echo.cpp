@@ -257,7 +257,7 @@ class ServerHandler : public logging_handler::named
                 crc32.reset();
                 crc32.process_bytes(body.data(), body.size());
 
-                auto seq = ++*session->servlet<int>("SEQ");
+                auto seq = ++session->servlet<int>("SEQ");
                 auto header = header::make(body.size(), seq, crc32.checksum());
                 session->write(header, body);
             }
