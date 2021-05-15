@@ -11,13 +11,170 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
+#include <regex>
 
 #include <boost/asio/ip/tcp.hpp>
+#if BOOST_ASIO_HAS_LOCAL_SOCKETS
+#include <boost/asio/local/stream_protocol.hpp>
+#endif
+#if BOOST_ASIO_HAS_BLUETOOTH_SOCKETS
+#include <boost/asio/bluetooth/stream_protocol.hpp>
+#endif
 #include <boost/exception/diagnostic_information.hpp>
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/trim.hpp>
 
 #undef ERROR
 #define LOG(TAG) logging::stream().base() << __FILE__ << ':' << __LINE__ << " [" << #TAG << "] - "
 #define NSLOG(TAG) LOG(TAG) << '[' << name() << ':' << session->id() << "] "
+
+
+inline minapp::endpoint make_endpoint(std::string s)
+{
+    boost::algorithm::trim(s);
+    std::smatch matches;
+
+#if BOOST_ASIO_HAS_LOCAL_SOCKETS
+    if (boost::algorithm::ends_with(s, ".sock"))
+    {
+        using namespace boost::asio::local;
+        if (s[0] == ':') s[0] = '\0';
+        return stream_protocol::endpoint(s);
+    }
+#endif
+#if BOOST_ASIO_HAS_BLUETOOTH_SOCKETS
+    if (std::regex_match(s, matches, std::regex(R"BT(\[((?:(?:|:|-)[[:xdigit:]]{2}){6})\]:(\d{1,2}))BT")))
+    {
+        using namespace boost::asio::bluetooth;
+        return stream_protocol::endpoint(make_address(matches[1]), std::stoi(matches[2]));
+    }
+#endif
+    if (std::regex_match(s, matches, std::regex(R"V4(((?:(?:^|\.)\d{1,3}){4}):(\d{1,6}))V4")))
+    {
+        using namespace boost::asio::ip;
+        return tcp::endpoint(make_address_v4(matches[1]), std::stoi(matches[2]));
+    }
+    if (std::regex_match(s, matches, std::regex(R"V6(\[([:[:xdigit:]]+)\]:(\d{1,6}))V6")))
+    {
+        using namespace boost::asio::ip;
+        return tcp::endpoint(make_address_v6(matches[1]), std::stoi(matches[2]));
+    }
+    return {};
+}
+
+inline minapp::endpoint make_endpoint(bool server, const char* protocol, int port = -1)
+{
+    if (std::strcmp(protocol, "ipv4") == 0)
+    {
+        using namespace boost::asio::ip;
+        if (port < 0) port = 2333;
+        if (server) return tcp::endpoint(tcp::v4(), port);
+        else return tcp::endpoint(address_v4::loopback(), port);
+    }
+    if (std::strcmp(protocol, "ipv6") == 0)
+    {
+        using namespace boost::asio::ip;
+        if (port < 0) port = 2333;
+        if (server) return tcp::endpoint(tcp::v6(), port);
+        else return tcp::endpoint(address_v6::loopback(), port);
+    }
+#if BOOST_ASIO_HAS_LOCAL_SOCKETS
+    if (std::strcmp(protocol, "local") == 0)
+    {
+        using namespace boost::asio::local;
+        if (port < 0) port = 0;
+        char buf[64] = { '\0' };
+        port = std::snprintf(buf + 1, sizeof(buf) - 1, "/tmp/minapp.%d.sock", port);
+        return stream_protocol::endpoint(boost::asio::string_view(buf, port + 2));
+    }
+#endif
+#if BOOST_ASIO_HAS_BLUETOOTH_SOCKETS
+    if (std::strcmp(protocol, "bluetooth") == 0)
+    {
+        using namespace boost::asio::bluetooth;
+        if (port < 0) port = 30;
+        return stream_protocol::endpoint(address(), port);
+    }
+#endif
+    return {};
+}
+
+inline minapp::endpoint make_endpoint(bool server, const char* protocol, const char* s)
+{
+    minapp::endpoint ep;
+    if (s) ep = make_endpoint(s);
+    else if (protocol) ep = make_endpoint(server, protocol);
+    if (ep == minapp::endpoint() && protocol && s && (s[0] == ':' ? ++s : s)[0] != '\0')
+    {
+        char* end;
+        long port = std::strtol(s, &end, 10);
+        if (*end == '\0') ep = make_endpoint(server, protocol, (int)port);
+    }
+    return ep;
+}
+
+inline std::pair<minapp::endpoint, minapp::endpoint> make_endpoint_pair(
+        const char* protocol, const char* server, const char* client)
+{
+    auto ep = make_endpoint(false, protocol, client);
+    if (protocol == nullptr) switch (ep.protocol().family())
+    {
+        case BOOST_ASIO_OS_DEF(AF_INET):
+            protocol = "ipv4";
+            break;
+        case BOOST_ASIO_OS_DEF(AF_INET6):
+            protocol = "ipv6";
+            break;
+#if BOOST_ASIO_HAS_LOCAL_SOCKETS
+        case AF_LOCAL:
+            protocol = client[0] == ':' ? "alocal" : "local";
+            break;
+#endif
+#if BOOST_ASIO_HAS_BLUETOOTH_SOCKETS
+        case BOOST_ASIO_OS_DEF(AF_BLUETOOTH):
+            protocol = "bluetooth";
+            break;
+#endif
+    }
+    return std::make_pair(make_endpoint(true, protocol, server), ep);
+}
+
+inline std::string to_string(const minapp::endpoint& ep)
+{
+    switch (ep.protocol().family())
+    {
+        case BOOST_ASIO_OS_DEF(AF_UNSPEC):
+            return "null";
+        case BOOST_ASIO_OS_DEF(AF_INET):
+        case BOOST_ASIO_OS_DEF(AF_INET6):
+            {
+                std::ostringstream os;
+                os << reinterpret_cast<boost::asio::ip::tcp::endpoint const&>(ep);
+                return os.str();
+            }
+#if BOOST_ASIO_HAS_LOCAL_SOCKETS
+        case AF_UNIX:
+            {
+                const char* s = reinterpret_cast<boost::asio::local::stream_protocol::endpoint const&>(ep).data()->sa_data;
+                if (s[0] == '\0') return ':' + std::string(s + 1);
+                else return s;
+            }
+#endif
+#if BOOST_ASIO_HAS_BLUETOOTH_SOCKETS
+        case BOOST_ASIO_OS_DEF(AF_BLUETOOTH):
+            {
+                std::ostringstream os;
+                os << reinterpret_cast<boost::asio::bluetooth::stream_protocol::endpoint const&>(ep);
+                return os.str();
+            }
+#endif
+        default:
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "unknown(AF:%d)", ep.protocol().family());
+            return buf;
+    }
+}
+
 
 using namespace minapp;
 
@@ -25,15 +182,14 @@ class logging final : public noexcept_handler_impl
 {
     void connect_impl(session* session, const endpoint& ep) override
     {
-        if (h->log_connect()) switch (ep.protocol().family())
+        if (h->log_connect())
         {
-            case BOOST_ASIO_OS_DEF(AF_INET):
-            case BOOST_ASIO_OS_DEF(AF_INET6):
-                NSLOG(CONN) << "connect to " << reinterpret_cast<boost::asio::ip::tcp::endpoint const&>(ep);
-                break;
-            default:
-                NSLOG(CONN) << "connect to unknown protocol endpoint";
-                break;
+            NSLOG(CONN) << "connect to " << to_string(
+#if BOOST_ASIO_HAS_LOCAL_SOCKETS
+                // https://stackoverflow.com/questions/17090043/unix-domain-sockets-accept-not-setting-sun-path
+                (ep.protocol().family() == AF_UNIX && ep.size() <= 2) ? session->socket().local_endpoint() :
+#endif
+                    ep);
         }
         h->connect(session, ep);
     }
