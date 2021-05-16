@@ -1,6 +1,8 @@
 #ifndef MINAPP_TEST_UTILS_HPP
 #define MINAPP_TEST_UTILS_HPP
 
+#include <minapp/connector.hpp>
+#include <minapp/acceptor.hpp>
 #include <minapp/handler.hpp>
 #include <minapp/session.hpp>
 #include <minapp/hexdump.hpp>
@@ -12,6 +14,7 @@
 #include <chrono>
 #include <mutex>
 #include <regex>
+#include <vector>
 
 #include <boost/asio/ip/tcp.hpp>
 #if BOOST_ASIO_HAS_LOCAL_SOCKETS
@@ -79,13 +82,14 @@ inline minapp::endpoint make_endpoint(bool server, const char* protocol, int por
         else return tcp::endpoint(address_v6::loopback(), port);
     }
 #if BOOST_ASIO_HAS_LOCAL_SOCKETS
-    if (std::strcmp(protocol, "local") == 0)
+    if (std::strcmp(protocol, "local") == 0 || std::strcmp(protocol, "alocal") == 0)
     {
         using namespace boost::asio::local;
+        bool abstract = protocol[0] == 'a';
         if (port < 0) port = 0;
         char buf[64] = { '\0' };
         port = std::snprintf(buf + 1, sizeof(buf) - 1, "/tmp/minapp.%d.sock", port);
-        return stream_protocol::endpoint(boost::asio::string_view(buf, port + 2));
+        return stream_protocol::endpoint(boost::asio::string_view(buf + !abstract, port + abstract + 1));
     }
 #endif
 #if BOOST_ASIO_HAS_BLUETOOTH_SOCKETS
@@ -304,6 +308,29 @@ public:
             std::cout << str() << std::endl;
         }
     };
+};
+
+struct workers
+{
+    std::vector<service_ptr> services;
+    std::vector<std::thread> threads;
+    workers(std::vector<service_ptr> services, std::size_t threads)
+            : services(std::move(services))
+    {
+        this->threads.reserve(this->services.size() * threads);
+        for (const auto& service : this->services)
+        {
+            for (std::size_t i = 0; i < threads; ++i)
+                this->threads.emplace_back(&context::run, service->context());
+        }
+    }
+    ~workers() noexcept(false)
+    {
+        for (const auto& service : this->services)
+            service->context()->stop();
+        for (auto& th : this->threads)
+            th.join();
+    }
 };
 
 #endif
