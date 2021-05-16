@@ -1,124 +1,8 @@
-#include <minapp/connector.hpp>
-#include <minapp/acceptor.hpp>
-#include <minapp/handler.hpp>
-#include <minapp/session.hpp>
-#include <minapp/hexdump.hpp>
-
-#include <iostream>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <vector>
-
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/exception/diagnostic_information.hpp>
 #include <boost/endian/conversion.hpp>
 #include <boost/endian/buffers.hpp>
 #include <boost/crc.hpp>
 
-std::mutex ostream_lock;
-struct ostream_guard
-{
-    ostream_guard() { ostream_lock.lock(); }
-    ~ostream_guard() { stream() << std::endl; ostream_lock.unlock(); }
-    std::ostream& stream() { return std::cout; }
-};
-
-#undef ERROR
-#define LOG(TAG) ostream_guard{}.stream() << __FILE__ << ':' << __LINE__ << " [" << #TAG << "] - "
-#define NSLOG(TAG) LOG(TAG) << '[' << name() << ':' << session->id() << "] "
-
-
-using namespace minapp;
-
-class logging_handler final : public noexcept_handler_impl
-{
-public:
-    class named : public handler
-    {
-    public:
-        virtual std::string name() const = 0;
-    };
-
-    using named_handler_ptr = std::shared_ptr<named>;
-
-    named_handler_ptr const h;
-
-    explicit logging_handler(named_handler_ptr h) : h(std::move(h)) {}
-
-    static handler_ptr wrap(named_handler_ptr h)
-    {
-        return std::make_shared<logging_handler>(std::move(h));
-    }
-
-    template<typename Handler>
-    static handler_ptr wrap()
-    {
-        return wrap(std::make_shared<Handler>());
-    }
-
-    std::string name() const
-    {
-        return h->name();
-    }
-
-    handler_ptr wrapped() noexcept override
-    {
-        return h;
-    }
-
-    void connect_impl(session* session, const endpoint& ep) override
-    {
-        switch (ep.protocol().family())
-        {
-        case BOOST_ASIO_OS_DEF(AF_INET):
-        case BOOST_ASIO_OS_DEF(AF_INET6):
-            NSLOG(CONN) << "connect to " << reinterpret_cast<boost::asio::ip::tcp::endpoint const&>(ep);
-            break;
-        default:
-            NSLOG(CONN) << "connect to unknown protocol endpoint";
-            break;
-        }
-        h->connect(session, ep);
-    }
-
-    void read_impl(session* session, buffer& buf) override
-    {
-        std::size_t size = buf.size();
-        const void* p = buf.data();
-        hexdump{NSLOG(READ) << "bufsize = " << size << '\n'}(p, size);
-        h->read(session, buf);
-    }
-
-    void write_impl(session* session, persistent_buffer_list& list) override
-    {
-        for(auto& buf : list)
-        {
-            std::size_t size = buf.size();
-            const void* p = buf.data();
-            hexdump{NSLOG(WRITE) << "bufsize = " << size << '\n'}(p, size);
-        }
-        h->write(session, list);
-    }
-
-    void except_impl(session* session, std::exception& e) override
-    {
-        NSLOG(EXCEPT) << "status:" << (int)session->status() << '\n' << boost::diagnostic_information(e);
-        h->except(session, e);
-    }
-
-    void error_impl(session* session, boost::system::error_code ec) override
-    {
-        NSLOG(ERROR) << "status:" << (int)session->status() << ' ' << ec << ' ' << '-' << ' ' << ec.message();
-        h->error(session, ec);
-    }
-
-    void close_impl(session* session) override
-    {
-        NSLOG(CLOSE);
-        h->close(session);
-    }
-};
+#include "utils.hpp"
 
 /**
  *      C --> S                    S --> C
@@ -184,13 +68,8 @@ struct header
 };
 
 
-class ServerHandler : public logging_handler::named
+class ServerHandler : public logging::handler
 {
-    std::string name() const override
-    {
-        return "server";
-    }
-
     void except(session* session, std::exception& e) override
     {
         session->close(true);
@@ -266,15 +145,13 @@ class ServerHandler : public logging_handler::named
         }
 #include <boost/asio/unyield.hpp>
     }
+
+public:
+    ServerHandler() noexcept : handler("server") {}
 };
 
-class ClientHandler : public logging_handler::named
+class ClientHandler : public logging::handler
 {
-    std::string name() const override
-    {
-        return "client";
-    }
-
     void connect(session* session, const endpoint& ep) override
     {
         session->protocol(protocol::prefix_32, protocol_options::use_little_endian);
@@ -302,20 +179,29 @@ class ClientHandler : public logging_handler::named
             NSLOG(CHECK) << "CRC match for server packet " << h.type.value();
         }
     }
+
+public:
+    ClientHandler() noexcept : handler("client") {}
 };
 
 
 int main(int argc, char* argv[]) try
 {
-    auto server = minapp::acceptor::create(logging_handler::wrap<ServerHandler>());
-    auto client = minapp::connector::create(logging_handler::wrap<ClientHandler>());
+    auto pair = argc <= 2 ?
+            make_endpoint_pair(argv[1] ? argv[1] : "ipv4", nullptr, nullptr) :
+            make_endpoint_pair(argv[3], argv[1], argv[2]);
 
-    boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v4(), 2333);
-    server->bind(ep);
+    auto server = minapp::acceptor::create(logging::wrap<ServerHandler>());
+    auto client = minapp::connector::create(logging::wrap<ClientHandler>());
 
-    std::thread([client] {
-        boost::asio::ip::tcp::endpoint ep(boost::asio::ip::address_v4::loopback(), 2333);
-        auto future = client->connect(ep);
+    workers workers({server, client}, 1);
+
+    {
+        server->bind(pair.first);
+    }
+
+    {
+        auto future = client->connect(pair.second);
         auto session = future.get();
 
         boost::crc_32_type crc32;
@@ -398,7 +284,7 @@ int main(int argc, char* argv[]) try
                 auto list = make_list(prefix, msg);
                 for(auto&& buf : list) crc32.process_bytes(buf.data(), buf.size());
                 auto header = persist(header::make(p, protocol_options::use_little_endian, crc32.checksum()));  // POD
-                assert(header.storage().type() == object::type_id<struct header>());                
+                assert(header.storage().type() == object::type_id<struct header>());
                 list.push_front(header);
                 session->write(list);
                 p = protocol::prefix_var;
@@ -438,25 +324,20 @@ int main(int argc, char* argv[]) try
         }
 
         session->close(false);
-    }).detach();
-
-
-    std::thread threads[2];
-    threads[0] = std::thread([server] { server->context()->run(); });
-    threads[1] = std::thread([client] { client->context()->run(); });
-
-    for(auto& th : threads)
-        th.join();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
 
     return 0;
 }
 catch (boost::system::system_error& e)
 {
     std::cerr << e.code() << ' ' << '-' << ' ' << e.what() << std::endl;
+    return 1;
 }
 catch (std::exception& e)
 {
     std::cerr << e.what() << std::endl;
+    return 1;
 }
 catch (...)
 {
