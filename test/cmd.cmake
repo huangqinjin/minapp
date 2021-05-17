@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.19)
+
+unset(ARGN)
+foreach(i RANGE ${CMAKE_ARGC})
+    if(NOT DEFINED ARGN)
+        if (CMAKE_ARGV${i} STREQUAL --)
+            set(ARGN [[]])
+        endif()
+    elseif(CMAKE_ARGV${i} STREQUAL |)
+        list(APPEND ARGN COMMAND)
+    else()
+        list(APPEND ARGN ${CMAKE_ARGV${i}})
+    endif()
+endforeach()
+
+cmake_language(CALL ${CMD} ${ARGN})

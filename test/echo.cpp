@@ -201,6 +201,8 @@ int main(int argc, char* argv[]) try
     }
 
     {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
         auto future = client->connect(pair.second);
         auto session = future.get();
 
