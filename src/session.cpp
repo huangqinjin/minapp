@@ -153,7 +153,7 @@ namespace
 
     const std::string crlf = { '\r', '\n' };
 
-    std::atomic_ulong id = ATOMIC_VAR_INIT(1);
+    std::atomic_ulong id = 1;
 
 
     struct session_impl : session, boost::intrusive::set_base_hook<boost::intrusive::link_mode<boost::intrusive::safe_link>>
