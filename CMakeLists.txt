@@ -10,7 +10,7 @@ endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Boost 1.66 REQUIRED COMPONENTS system)
+find_package(Boost 1.75 REQUIRED)
 
 set(SOURCE_FILES
         src/handler.cpp
@@ -33,7 +33,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 # https://cmake.org/cmake/help/latest/prop_tgt/INTERFACE_INCLUDE_DIRECTORIES.html
 # https://stackoverflow.com/questions/25676277/cmake-target-include-directories-prints-an-error-when-i-try-to-add-the-source
 target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
-target_link_libraries(${PROJECT_NAME} PUBLIC Boost::boost Boost::system)
+target_link_libraries(${PROJECT_NAME} PUBLIC Boost::boost)
 target_compile_definitions(${PROJECT_NAME} PUBLIC BOOST_ASIO_NO_DEPRECATED)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 
@@ -65,9 +65,9 @@ include(CMakePackageConfigHelpers)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake.in"
 "@PACKAGE_INIT@
 include(\"\${CMAKE_CURRENT_LIST_DIR}/${PROJECT_NAME}-targets.cmake\")
-if(NOT TARGET Boost::system)
+if(NOT TARGET Boost::boost)
     include(CMakeFindDependencyMacro)
-    find_dependency(Boost COMPONENTS system)
+    find_dependency(Boost)
 endif()
 check_required_components(${PROJECT_NAME})
 ")
