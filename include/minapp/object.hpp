@@ -87,7 +87,7 @@ protected:
 
     class placeholder
     {
-        std::atomic<long> refcount = ATOMIC_VAR_INIT(1);
+        std::atomic<long> refcount = 1;
 
     public:
         long addref(long c = 1) noexcept { return c + refcount.fetch_add(c, std::memory_order_relaxed); }
@@ -198,9 +198,9 @@ protected:
                  typename = std::enable_if_t<std::is_invocable_r_v<R, F, Args...>>>
         [[nodiscard]] static auto create(T&& t, A&&... a)
         {
-            class fn : public holder, public holder::template fn<F>
+            class impl : public holder, public fn<F>
             {
-                using base = holder::fn<F>;
+                using base = fn<F>;
 
                 R call(Args... args) override
                 {
@@ -210,14 +210,16 @@ protected:
                 [[noreturn]] void throws() override { throw std::addressof(base::value()); }
 
             public:
-                explicit fn(T&& t, A&&... a) : base(is_in_place_type<D>{}, std::forward<T>(t), std::forward<A>(a)...) {}
+                explicit impl(T&& t, A&&... a) : base(is_in_place_type<D>{}, std::forward<T>(t), std::forward<A>(a)...) {}
             };
 
-            return new fn(std::forward<T>(t), std::forward<A>(a)...);
+            return new impl(std::forward<T>(t), std::forward<A>(a)...);
         }
     };
 
 public:
+    class atomic;
+
     template<typename F>
     class fn;
 
@@ -356,6 +358,213 @@ CAST(object_cast)
 CAST(polymorphic_object_cast)
 #undef CAST
 
+
+class object::atomic
+{
+    using storage_t = std::uintptr_t;
+    enum : storage_t
+    {
+        mask = 3,
+        locked = 1,
+        waiting = 2,
+    };
+
+    mutable std::atomic<storage_t> storage;
+    static_assert(sizeof(handle) <= sizeof(storage_t), "atomic::storage cannot hold object::handle");
+    static_assert(alignof(placeholder) >= (1 << 2), "2 low order bits are needed by object::atomic");
+
+    handle lock_and_load(std::memory_order order) const noexcept
+    {
+        auto v = storage.load(order);
+        while (true) switch (v & mask)
+        {
+            case 0: // try to lock
+                if (storage.compare_exchange_weak(v, v | locked,
+                    std::memory_order_acquire, std::memory_order_relaxed))
+                    return reinterpret_cast<handle>(v);
+                break;
+            case locked: // try to wait
+                if (!storage.compare_exchange_weak(v, (v & ~mask) | waiting,
+                    std::memory_order_relaxed, std::memory_order_relaxed))
+                    break; // try again
+                v = (v & ~mask) | waiting;
+                [[fallthrough]];
+            case waiting: // just wait
+#if defined(__cpp_lib_atomic_wait)
+                storage.wait(v, std::memory_order_relaxed);
+#endif
+                v = storage.load(std::memory_order_relaxed);
+                break;
+            default:
+                std::terminate();
+        }
+    }
+
+    void store_and_unlock(handle h, std::memory_order order) const noexcept
+    {
+        auto v = storage.exchange(reinterpret_cast<storage_t>(h), order);
+#if defined(__cpp_lib_atomic_wait)
+        // notify all waiters since waiting mask has been cleared.
+        if ((v & mask) == waiting) storage.notify_all();
+#else
+        (void)v;
+#endif
+    }
+
+public:
+    static constexpr bool is_always_lock_free = false;
+    bool is_lock_free() const noexcept { return is_always_lock_free; }
+
+    atomic(const atomic&) = delete;
+    atomic& operator=(const atomic&) = delete;
+    atomic() noexcept : storage(storage_t{}) {}
+
+    atomic(object obj) noexcept
+        : storage(reinterpret_cast<storage_t>(obj.release())) {}
+
+    ~atomic() noexcept
+    {
+        auto v = storage.load(std::memory_order_relaxed);
+        (void)object(reinterpret_cast<handle>(v));
+    }
+
+    // need non-const version, otherwise constructor of object would be used
+    // during implicit conversion from non-const atomic to object.
+    operator object() noexcept
+    {
+        return load();
+    }
+
+    operator object() const noexcept
+    {
+        return load();
+    }
+
+    object operator=(object desired) noexcept
+    {
+        store(desired);
+        return std::move(desired);
+    }
+
+    void store(object desired, std::memory_order order = std::memory_order_seq_cst) noexcept
+    {
+        exchange(std::move(desired), order);
+    }
+
+    object load(std::memory_order order = std::memory_order_seq_cst) const noexcept
+    {
+        if (order != std::memory_order_seq_cst) order = std::memory_order_relaxed;
+        object obj(lock_and_load(order));
+        if (obj.p) obj.p->addref();
+        store_and_unlock(obj.p, std::memory_order_release);
+        return obj;
+    }
+
+    object exchange(object desired, std::memory_order order = std::memory_order_seq_cst) noexcept
+    {
+        if (order != std::memory_order_seq_cst) order = std::memory_order_release;
+        object obj(lock_and_load(std::memory_order_relaxed));
+        store_and_unlock(desired.release(), order);
+        return obj;
+    }
+
+    bool compare_exchange_weak(object& expected, object desired,
+                               std::memory_order success,
+                               std::memory_order failure) noexcept
+    {
+        return compare_exchange_strong(expected, std::move(desired), success, failure);
+    }
+
+    bool compare_exchange_weak(object& expected, object desired,
+                               std::memory_order order =
+                               std::memory_order_seq_cst) noexcept
+    {
+        return compare_exchange_strong(expected, std::move(desired), order);
+    }
+
+    bool compare_exchange_strong(object& expected, object desired,
+                                 std::memory_order success,
+                                 std::memory_order failure) noexcept
+    {
+        if (success != std::memory_order_seq_cst) success = std::memory_order_release;
+        if (failure != std::memory_order_seq_cst) failure = std::memory_order_release;
+        object obj(lock_and_load(std::memory_order_relaxed));
+        if (obj == expected)
+        {
+            store_and_unlock(desired.release(), success);
+            return true;
+        }
+        else
+        {
+            if (obj.p) obj.p->addref();
+            store_and_unlock(obj.p, failure);
+            obj.swap(expected);
+            return false;
+        }
+    }
+
+    bool compare_exchange_strong(object& expected, object desired,
+                                 std::memory_order order =
+                                 std::memory_order_seq_cst) noexcept
+    {
+        return compare_exchange_strong(expected, std::move(desired), order, order);
+    }
+
+#if defined(__cpp_lib_atomic_wait)
+    void wait(object old, std::memory_order order = std::memory_order_seq_cst) const noexcept
+    {
+        return storage.wait(old.p, order);
+    }
+
+    void notify_one() noexcept
+    {
+        return storage.notify_one();
+    }
+
+    void notify_all() noexcept
+    {
+        return storage.notify_all();
+    }
+#endif
+
+    //////////////////
+    //// spinlock ////
+    //////////////////
+    bool try_lock() noexcept
+    {
+        auto v = storage.load(std::memory_order_relaxed) & ~mask;
+        return storage.compare_exchange_weak(v, v | locked,
+               std::memory_order_acquire, std::memory_order_relaxed);
+    }
+
+    void lock() noexcept
+    {
+        (void)lock_and_load(std::memory_order_relaxed);
+    }
+
+    void unlock() noexcept
+    {
+        auto v = storage.load(std::memory_order_relaxed) & ~mask;
+        store_and_unlock(reinterpret_cast<handle>(v), std::memory_order_release);
+    }
+
+    object get() const noexcept
+    {
+        auto v = storage.load(std::memory_order_relaxed);
+        object obj(reinterpret_cast<handle>(v & ~mask));
+        if (obj.p) obj.p->addref();
+        return obj;
+    }
+
+    object set(object obj) noexcept
+    {
+        auto o = reinterpret_cast<storage_t>(obj.p);
+        auto v = storage.load(std::memory_order_relaxed);
+        while (!storage.compare_exchange_weak(v, o | (v & mask), std::memory_order_relaxed));
+        obj.p = reinterpret_cast<handle>(v & ~mask);
+        return std::move(obj);
+    }
+};
 
 template<typename R, typename... Args>
 class object::fn<R(Args...)> : public object
